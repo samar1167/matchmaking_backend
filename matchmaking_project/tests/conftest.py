@@ -118,3 +118,39 @@ def private_person(auth_headers_one):
     resp = requests.post(f"{BASE_URL}/private-persons/", json=PRIVATE_PERSON, headers=auth_headers_one)
     assert resp.status_code == 201, f"Private person create failed: {resp.text}"
     return resp.json()
+
+PAID_USER = {
+    "username": "paid_user_test",
+    "email":    "paid@test.com",
+    "password": "PaidPass123!",
+}
+
+
+@pytest.fixture(scope="session")
+def register_paid_user():
+    resp = requests.post(f"{BASE_URL}/auth/register/", json=PAID_USER)
+    assert resp.status_code in (201, 400)
+    return PAID_USER
+
+
+@pytest.fixture(scope="session")
+def token_paid_user(register_paid_user):
+    resp = requests.post(f"{BASE_URL}/auth/login/", json={
+        "username": PAID_USER["username"],
+        "password": PAID_USER["password"],
+    })
+    assert resp.status_code == 200
+    return resp.json()
+
+
+@pytest.fixture(scope="session")
+def auth_headers_paid(token_paid_user):
+    return {"Authorization": f"Bearer {token_paid_user['access']}"}
+
+
+@pytest.fixture(scope="session")
+def plan_info(auth_headers_one):
+    """Fetch current plan for user one."""
+    resp = requests.get(f"{BASE_URL}/plan/me/", headers=auth_headers_one)
+    assert resp.status_code == 200
+    return resp.json()
