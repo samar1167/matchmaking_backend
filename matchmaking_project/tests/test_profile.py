@@ -52,4 +52,4 @@ class TestUserProfile:
         resp = requests.get(f"{BASE_URL}/profiles/me/", headers=auth_headers_two)
         assert resp.status_code == 200
         # Should return user two's own profile, not user one's
-        assert resp.json()["user"]["username"] == "testuser_two"
+        assert resp.json()["user"]["email"] == "two@test.com"

@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth.password_validation import validate_password
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -10,6 +11,7 @@ from .models import UserPlan, PaymentRecord, FeatureFlag, CompatibilityParameter
 from .models import UserProfile, PrivatePerson, CompatibilityScore
 from .serializers import (RegisterSerializer, UserProfileSerializer, PrivatePersonSerializer, CompatibilityScoreSerializer, CompatibilityRequestSerializer)
 from .serializers import (PurchaseCreditsSerializer, PaymentRecordSerializer, CompatibilityParameterSerializer)
+from .serializers import EmailTokenObtainPairSerializer
 from .astrology_service import AstrologyService
 import logging
 logger = logging.getLogger(__name__)
@@ -17,6 +19,10 @@ logger = logging.getLogger(__name__)
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
+
+
+class LoginView(TokenObtainPairView):
+    serializer_class = EmailTokenObtainPairSerializer
 
 
 class LogoutView(generics.GenericAPIView):
@@ -85,49 +91,49 @@ class PrivatePersonViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
 
-class CompatibilityViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
-    @action(detail=False, methods=['post'])
-    def check(self, request):
-        req_ser = CompatibilityRequestSerializer(data=request.data)
-        req_ser.is_valid(raise_exception=True)
-        data = req_ser.validated_data
-        try:
-            user_profile = get_object_or_404(UserProfile, user=request.user)
-            if data.get('matched_user_id'):
-                target = get_object_or_404(UserProfile, id=data['matched_user_id'])
-                filter_kwargs = {'user': user_profile, 'matched_user': target, 'matched_private_person': None}
-            else:
-                target = get_object_or_404(PrivatePerson, id=data['matched_private_person_id'], owner=request.user)
-                filter_kwargs = {'user': user_profile, 'matched_user': None, 'matched_private_person': target}
-            compat_data = AstrologyService.get_compatibility(user_profile, target, force_refresh=data.get('force_refresh', False))
-            defaults = {
-                'overall_score': compat_data['overall_score'],
-                'sun_compatibility': compat_data.get('sun_compatibility'),
-                'moon_compatibility': compat_data.get('moon_compatibility'),
-                'venus_compatibility': compat_data.get('venus_compatibility'),
-                'mars_compatibility': compat_data.get('mars_compatibility'),
-                'description': compat_data.get('description', ''),
-                'api_response': compat_data.get('api_response'),
-            }
-            obj, _ = CompatibilityScore.objects.update_or_create(**filter_kwargs, defaults=defaults)
-            return Response(CompatibilityScoreSerializer(obj).data)
-        except Exception as e:
-            logger.error(f"Compatibility check error: {e}")
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# class CompatibilityViewSet(viewsets.ViewSet):
+#     permission_classes = [IsAuthenticated]
+#     @action(detail=False, methods=['post'])
+#     def check(self, request):
+#         req_ser = CompatibilityRequestSerializer(data=request.data)
+#         req_ser.is_valid(raise_exception=True)
+#         data = req_ser.validated_data
+#         try:
+#             user_profile = get_object_or_404(UserProfile, user=request.user)
+#             if data.get('matched_user_id'):
+#                 target = get_object_or_404(UserProfile, id=data['matched_user_id'])
+#                 filter_kwargs = {'user': user_profile, 'matched_user': target, 'matched_private_person': None}
+#             else:
+#                 target = get_object_or_404(PrivatePerson, id=data['matched_private_person_id'], owner=request.user)
+#                 filter_kwargs = {'user': user_profile, 'matched_user': None, 'matched_private_person': target}
+#             compat_data = AstrologyService.get_compatibility(user_profile, target, force_refresh=data.get('force_refresh', False))
+#             defaults = {
+#                 'overall_score': compat_data['overall_score'],
+#                 'sun_compatibility': compat_data.get('sun_compatibility'),
+#                 'moon_compatibility': compat_data.get('moon_compatibility'),
+#                 'venus_compatibility': compat_data.get('venus_compatibility'),
+#                 'mars_compatibility': compat_data.get('mars_compatibility'),
+#                 'description': compat_data.get('description', ''),
+#                 'api_response': compat_data.get('api_response'),
+#             }
+#             obj, _ = CompatibilityScore.objects.update_or_create(**filter_kwargs, defaults=defaults)
+#             return Response(CompatibilityScoreSerializer(obj).data)
+#         except Exception as e:
+#             logger.error(f"Compatibility check error: {e}")
+#             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    @action(detail=False, methods=['get'])
-    def history(self, request):
-        profile = get_object_or_404(UserProfile, user=request.user)
-        qs = CompatibilityScore.objects.filter(user=profile).order_by('-created_at')
-        return Response(CompatibilityScoreSerializer(qs, many=True).data)
+#     @action(detail=False, methods=['get'])
+#     def history(self, request):
+#         profile = get_object_or_404(UserProfile, user=request.user)
+#         qs = CompatibilityScore.objects.filter(user=profile).order_by('-created_at')
+#         return Response(CompatibilityScoreSerializer(qs, many=True).data)
 
-    @action(detail=False, methods=['get'])
-    def top_matches(self, request):
-        limit = int(request.query_params.get('limit', 10))
-        profile = get_object_or_404(UserProfile, user=request.user)
-        qs = CompatibilityScore.objects.filter(user=profile).order_by('-overall_score')[:limit]
-        return Response(CompatibilityScoreSerializer(qs, many=True).data)
+#     @action(detail=False, methods=['get'])
+#     def top_matches(self, request):
+#         limit = int(request.query_params.get('limit', 10))
+#         profile = get_object_or_404(UserProfile, user=request.user)
+#         qs = CompatibilityScore.objects.filter(user=profile).order_by('-overall_score')[:limit]
+#         return Response(CompatibilityScoreSerializer(qs, many=True).data)
 
 
 class CompatibilityViewSet(viewsets.ViewSet):
@@ -159,19 +165,19 @@ class CompatibilityViewSet(viewsets.ViewSet):
                 target = get_object_or_404(PrivatePerson, id=data['matched_private_person_id'], owner=request.user)
                 filter_kwargs = {'user': user_profile, 'matched_user': None, 'matched_private_person': target}
 
+            # ── Call astrology API ──
+            compat_data = AstrologyService.get_compatibility(
+                user_profile, target,
+            )
+
             # ── Consume one credit (paid first, then free) ──
             credit_type = plan.consume_credit()
             is_paid_session = (credit_type == 'paid')
 
-            # ── Call astrology API ──
-            compat_data = AstrologyService.get_compatibility(
-                user_profile, target,
-                force_refresh=data.get('force_refresh', False),
-            )
-
             # ── Persist result ──
             defaults = {
-                'overall_score':       compat_data['overall_score'],
+                'is_paid':             is_paid_session,
+                'overall_score':       compat_data['compatibility_score'],
                 'sun_compatibility':   compat_data.get('sun_compatibility'),
                 'moon_compatibility':  compat_data.get('moon_compatibility'),
                 'venus_compatibility': compat_data.get('venus_compatibility'),
@@ -182,10 +188,7 @@ class CompatibilityViewSet(viewsets.ViewSet):
             obj, _ = CompatibilityScore.objects.update_or_create(**filter_kwargs, defaults=defaults)
 
             # ── Serialize with plan context ──
-            serializer = CompatibilityScoreSerializer(obj, context={
-                'request': request,
-                'is_paid_session': is_paid_session,
-            })
+            serializer = CompatibilityScoreSerializer(obj, context={'request': request})
             return Response(serializer.data)
 
         except Exception as e:
@@ -196,14 +199,14 @@ class CompatibilityViewSet(viewsets.ViewSet):
     def history(self, request):
         profile = get_object_or_404(UserProfile, user=request.user)
         qs = CompatibilityScore.objects.filter(user=profile).order_by('-created_at')
-        return Response(CompatibilityScoreSerializer(qs, many=True, context={'request': request, 'is_paid_session': False}).data)
+        return Response(CompatibilityScoreSerializer(qs, many=True, context={'request': request}).data)
 
     @action(detail=False, methods=['get'])
     def top_matches(self, request):
         limit   = int(request.query_params.get('limit', 10))
         profile = get_object_or_404(UserProfile, user=request.user)
         qs      = CompatibilityScore.objects.filter(user=profile).order_by('-overall_score')[:limit]
-        return Response(CompatibilityScoreSerializer(qs, many=True, context={'request': request, 'is_paid_session': False}).data)
+        return Response(CompatibilityScoreSerializer(qs, many=True, context={'request': request}).data)
     
 
 class PlanViewSet(viewsets.ViewSet):

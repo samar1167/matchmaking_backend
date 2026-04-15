@@ -3,6 +3,12 @@ from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from datetime import datetime
 
+
+def user_profile_picture_upload_to(instance, filename):
+    extension = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'jpg'
+    return f'user_profiles/{instance.user_id}/profile.{extension}'
+
+
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='astro_profile')
     date_of_birth  = models.DateField()
@@ -11,6 +17,7 @@ class UserProfile(models.Model):
     latitude       = models.FloatField(null=True, blank=True)
     longitude      = models.FloatField(null=True, blank=True)
     timezone       = models.CharField(max_length=50, default='UTC')
+    profile_picture = models.ImageField(upload_to=user_profile_picture_upload_to, null=True, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)
 
@@ -55,6 +62,7 @@ class CompatibilityScore(models.Model):
     user                   = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='compatibility_checks')
     matched_user           = models.ForeignKey(UserProfile, on_delete=models.CASCADE, null=True, blank=True, related_name='matched_against')
     matched_private_person = models.ForeignKey(PrivatePerson, on_delete=models.CASCADE, null=True, blank=True, related_name='compatibility_checks')
+    is_paid                = models.BooleanField(default=False)
     overall_score          = models.FloatField(validators=[MinValueValidator(0), MaxValueValidator(100)])
     sun_compatibility      = models.FloatField(null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)])
     moon_compatibility     = models.FloatField(null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)])

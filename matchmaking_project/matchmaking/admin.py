@@ -7,8 +7,14 @@ from .models import (
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display  = ('user', 'date_of_birth', 'place_of_birth', 'created_at')
-    search_fields = ('user__username', 'place_of_birth')
+    list_display  = ('user', 'user_first_name', 'user_last_name', 'date_of_birth', 'place_of_birth', 'created_at')
+    search_fields = ('user__email', 'user__first_name', 'user__last_name', 'place_of_birth')
+
+    def user_first_name(self, obj):
+        return obj.user.first_name
+
+    def user_last_name(self, obj):
+        return obj.user.last_name
 
 
 @admin.register(PrivatePerson)
@@ -19,7 +25,7 @@ class PrivatePersonAdmin(admin.ModelAdmin):
 
 @admin.register(CompatibilityScore)
 class CompatibilityScoreAdmin(admin.ModelAdmin):
-    list_display  = ('user', 'overall_score', 'is_private_match', 'created_at')
+    list_display  = ('user', 'overall_score', 'is_paid', 'is_private_match', 'created_at')
     ordering      = ('-overall_score',)
 
 
@@ -47,7 +53,7 @@ class FeatureFlagAdmin(admin.ModelAdmin):
 @admin.register(UserPlan)
 class UserPlanAdmin(admin.ModelAdmin):
     list_display  = ('user', 'free_credits', 'paid_credits', 'updated_at')
-    search_fields = ('user__username',)
+    search_fields = ('user__email',)
     list_editable = ('free_credits', 'paid_credits')
     # ↑ Admin can manually adjust credits for any user
 
@@ -56,5 +62,5 @@ class UserPlanAdmin(admin.ModelAdmin):
 class PaymentRecordAdmin(admin.ModelAdmin):
     list_display  = ('user', 'amount_usd', 'credits_purchased', 'status', 'payment_reference', 'created_at')
     list_filter   = ('status',)
-    search_fields = ('user__username', 'payment_reference')
+    search_fields = ('user__email', 'payment_reference')
     readonly_fields = ('user', 'amount_usd', 'credits_purchased', 'created_at', 'completed_at')

@@ -65,13 +65,12 @@ class TestCreditWallet:
         """A user with zero credits should get 402 Payment Required."""
         # Create a brand new user and exhaust their credits
         new_user = {
-            "username": "zero_credit_user_xyz",
             "email":    "zerocredit@test.com",
             "password": "ZeroPass123!",
         }
         requests.post(f"{BASE_URL}/auth/register/", json=new_user)
         token = requests.post(f"{BASE_URL}/auth/login/", json={
-            "username": new_user["username"],
+            "email": new_user["email"],
             "password": new_user["password"],
         }).json()
         headers = {"Authorization": f"Bearer {token['access']}"}

@@ -17,7 +17,6 @@ class TestFreemiumFlow:
         """
         # 1. Register fresh user
         user = {
-            "username": "journey_user_e2e",
             "email":    "journey@test.com",
             "password": "JourneyPass123!",
         }
@@ -25,7 +24,7 @@ class TestFreemiumFlow:
         assert reg.status_code in (201, 400)
 
         token = requests.post(f"{BASE_URL}/auth/login/", json={
-            "username": user["username"], "password": user["password"],
+            "email": user["email"], "password": user["password"],
         }).json()
         headers = {"Authorization": f"Bearer {token['access']}"}
 

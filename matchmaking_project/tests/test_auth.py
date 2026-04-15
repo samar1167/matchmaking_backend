@@ -8,34 +8,30 @@ class TestRegistration:
 
     def test_register_success(self):
         resp = requests.post(f"{BASE_URL}/auth/register/", json={
-            "username": "fresh_user_reg",
             "email": "fresh@test.com",
             "password": "FreshPass123!",
         })
         assert resp.status_code == 201
         data = resp.json()
         assert "id" in data
-        assert data["username"] == "fresh_user_reg"
+        assert data["email"] == "fresh@test.com"
         assert "password" not in data  # password must never be returned
 
-    def test_register_duplicate_username(self, register_user_one):
+    def test_register_duplicate_email(self, register_user_one):
         resp = requests.post(f"{BASE_URL}/auth/register/", json={
-            "username": "testuser_one",
-            "email": "other@test.com",
+            "email": "one@test.com",
             "password": "AnotherPass1!",
         })
         assert resp.status_code == 400
 
     def test_register_missing_password(self):
         resp = requests.post(f"{BASE_URL}/auth/register/", json={
-            "username": "no_password_user",
             "email": "nopw@test.com",
         })
         assert resp.status_code == 400
 
     def test_register_weak_password(self):
         resp = requests.post(f"{BASE_URL}/auth/register/", json={
-            "username": "weakpw_user",
             "email": "weak@test.com",
             "password": "123",
         })
@@ -46,7 +42,7 @@ class TestLogin:
 
     def test_login_success(self, register_user_one):
         resp = requests.post(f"{BASE_URL}/auth/login/", json={
-            "username": "testuser_one",
+            "email": "one@test.com",
             "password": "TestPass123!",
         })
         assert resp.status_code == 200
@@ -56,14 +52,14 @@ class TestLogin:
 
     def test_login_wrong_password(self, register_user_one):
         resp = requests.post(f"{BASE_URL}/auth/login/", json={
-            "username": "testuser_one",
+            "email": "one@test.com",
             "password": "WrongPassword!",
         })
         assert resp.status_code == 401
 
     def test_login_nonexistent_user(self):
         resp = requests.post(f"{BASE_URL}/auth/login/", json={
-            "username": "nobody",
+            "email": "nobody@test.com",
             "password": "SomePass1!",
         })
         assert resp.status_code == 401
@@ -97,7 +93,7 @@ class TestChangePassword:
 
         # change it back so other tests still work
         token = requests.post(f"{BASE_URL}/auth/login/", json={
-            "username": "testuser_one", "password": "UpdatedPass999!"
+            "email": "one@test.com", "password": "UpdatedPass999!"
         }).json()
         requests.post(f"{BASE_URL}/auth/change-password/", json={
             "old_password": "UpdatedPass999!",
@@ -124,7 +120,7 @@ class TestLogout:
     def test_logout_success(self, register_user_one):
         # Login fresh to get a token we can safely blacklist
         token = requests.post(f"{BASE_URL}/auth/login/", json={
-            "username": "testuser_one", "password": "TestPass123!"
+            "email": "one@test.com", "password": "TestPass123!"
         }).json()
         resp = requests.post(f"{BASE_URL}/auth/logout/", json={
             "refresh": token["refresh"]

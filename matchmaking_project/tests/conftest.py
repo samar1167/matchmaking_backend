@@ -4,13 +4,11 @@ import requests
 BASE_URL = "http://localhost/api"
 
 USER_ONE = {
-    "username": "testuser_one",
     "email": "one@test.com",
     "password": "TestPass123!",
 }
 
 USER_TWO = {
-    "username": "testuser_two",
     "email": "two@test.com",
     "password": "TestPass456!",
 }
@@ -57,7 +55,7 @@ def register_user_two():
 def token_user_one(register_user_one):
     """Login as user one and return access + refresh tokens."""
     resp = requests.post(f"{BASE_URL}/auth/login/", json={
-        "username": USER_ONE["username"],
+        "email": USER_ONE["email"],
         "password": USER_ONE["password"],
     })
     assert resp.status_code == 200, f"Login failed: {resp.text}"
@@ -71,7 +69,7 @@ def token_user_one(register_user_one):
 def token_user_two(register_user_two):
     """Login as user two and return access + refresh tokens."""
     resp = requests.post(f"{BASE_URL}/auth/login/", json={
-        "username": USER_TWO["username"],
+        "email": USER_TWO["email"],
         "password": USER_TWO["password"],
     })
     assert resp.status_code == 200, f"Login failed: {resp.text}"
@@ -120,7 +118,6 @@ def private_person(auth_headers_one):
     return resp.json()
 
 PAID_USER = {
-    "username": "paid_user_test",
     "email":    "paid@test.com",
     "password": "PaidPass123!",
 }
@@ -136,7 +133,7 @@ def register_paid_user():
 @pytest.fixture(scope="session")
 def token_paid_user(register_paid_user):
     resp = requests.post(f"{BASE_URL}/auth/login/", json={
-        "username": PAID_USER["username"],
+        "email": PAID_USER["email"],
         "password": PAID_USER["password"],
     })
     assert resp.status_code == 200
