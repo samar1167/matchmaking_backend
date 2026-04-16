@@ -2,6 +2,8 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from datetime import datetime
+import secrets
+from django.utils import timezone
 
 
 def user_profile_picture_upload_to(instance, filename):
@@ -219,4 +221,52 @@ class PaymentRecord(models.Model):
 
     def __str__(self):
         return f"{self.user.username} — ${self.amount_usd} — {self.status}"
-    
+
+
+class AuthActionToken(models.Model):
+    PURPOSE_EMAIL_VERIFICATION = 'email_verification'
+    PURPOSE_PASSWORD_RESET = 'password_reset'
+    PURPOSE_CHOICES = [
+        (PURPOSE_EMAIL_VERIFICATION, 'Email Verification'),
+        (PURPOSE_PASSWORD_RESET, 'Password Reset'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='auth_action_tokens')
+    purpose = models.CharField(max_length=32, choices=PURPOSE_CHOICES)
+    token = models.CharField(max_length=128, unique=True, db_index=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'purpose']),
+            models.Index(fields=['purpose', 'expires_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.purpose}"
+
+    @property
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
+
+    @property
+    def is_usable(self):
+        return self.used_at is None and not self.is_expired
+
+    def mark_used(self):
+        if self.used_at is None:
+            self.used_at = timezone.now()
+            self.save(update_fields=['used_at'])
+
+    @classmethod
+    def issue_token(cls, user, purpose, lifetime):
+        cls.objects.filter(user=user, purpose=purpose, used_at__isnull=True).delete()
+        return cls.objects.create(
+            user=user,
+            purpose=purpose,
+            token=secrets.token_urlsafe(32),
+            expires_at=timezone.now() + lifetime,
+        )

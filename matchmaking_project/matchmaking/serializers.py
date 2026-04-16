@@ -1,8 +1,12 @@
 from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import UserProfile, PrivatePerson, CompatibilityScore, CompatibilityParameter, PaymentRecord, UserPlan
+from .models import (
+    UserProfile, PrivatePerson, CompatibilityScore, CompatibilityParameter,
+    PaymentRecord, UserPlan, AuthActionToken,
+)
 
 User = get_user_model()
 
@@ -33,6 +37,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             username=email,
             email=email,
             password=validated_data['password'],
+            is_active=False,
         )
 
 class UserSerializer(serializers.ModelSerializer):
@@ -57,6 +62,9 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         self.user = authenticate(request=request, username=email, password=password)
         if not self.user:
+            user = User.objects.filter(email__iexact=email).first()
+            if user and not user.is_active:
+                raise AuthenticationFailed('Email verification is required before login.')
             raise AuthenticationFailed('No active account found with the given credentials.')
 
         refresh = self.get_token(self.user)
@@ -64,6 +72,50 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
             'refresh': str(refresh),
             'access': str(refresh.access_token),
         }
+
+
+class VerifyEmailSerializer(serializers.Serializer):
+    token = serializers.CharField()
+
+    def validate(self, attrs):
+        token = attrs['token'].strip()
+        record = AuthActionToken.objects.filter(
+            token=token,
+            purpose=AuthActionToken.PURPOSE_EMAIL_VERIFICATION,
+        ).select_related('user').first()
+        if not record or not record.is_usable:
+            raise serializers.ValidationError({'token': 'Invalid or expired verification token.'})
+        attrs['record'] = record
+        return attrs
+
+
+class EmailAddressSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate(self, attrs):
+        token = attrs['token'].strip()
+        record = AuthActionToken.objects.filter(
+            token=token,
+            purpose=AuthActionToken.PURPOSE_PASSWORD_RESET,
+        ).select_related('user').first()
+        if not record or not record.is_usable:
+            raise serializers.ValidationError({'token': 'Invalid or expired reset token.'})
+
+        try:
+            validate_password(attrs['new_password'], record.user)
+        except Exception as exc:
+            raise serializers.ValidationError({'new_password': list(exc)}) from exc
+
+        attrs['record'] = record
+        return attrs
 
 class UserProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)

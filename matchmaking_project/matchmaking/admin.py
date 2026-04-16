@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     UserProfile, PrivatePerson, CompatibilityScore,
-    CompatibilityParameter, FeatureFlag, UserPlan, PaymentRecord,
+    CompatibilityParameter, FeatureFlag, UserPlan, PaymentRecord, AuthActionToken,
 )
 
 
@@ -64,3 +64,11 @@ class PaymentRecordAdmin(admin.ModelAdmin):
     list_filter   = ('status',)
     search_fields = ('user__email', 'payment_reference')
     readonly_fields = ('user', 'amount_usd', 'credits_purchased', 'created_at', 'completed_at')
+
+
+@admin.register(AuthActionToken)
+class AuthActionTokenAdmin(admin.ModelAdmin):
+    list_display = ('user', 'purpose', 'expires_at', 'used_at', 'created_at')
+    list_filter = ('purpose',)
+    search_fields = ('user__email', 'token')
+    readonly_fields = ('user', 'purpose', 'token', 'expires_at', 'used_at', 'created_at')

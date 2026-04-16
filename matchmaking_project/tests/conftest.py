@@ -1,5 +1,19 @@
 import pytest
 import requests
+import os
+import sys
+from pathlib import Path
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+import django
+django.setup()
+
+from django.contrib.auth.models import User
+from matchmaking.models import AuthActionToken
 
 BASE_URL = "http://localhost/api"
 
@@ -35,11 +49,39 @@ PROFILE_ONE = {
 }
 
 
+def get_user(email):
+    return User.objects.filter(email__iexact=email).first()
+
+
+def get_latest_token(email, purpose):
+    user = get_user(email)
+    assert user is not None, f"User not found for {email}"
+    token_record = AuthActionToken.objects.filter(
+        user=user,
+        purpose=purpose,
+        used_at__isnull=True,
+    ).order_by('-created_at').first()
+    assert token_record is not None, f"No {purpose} token found for {email}"
+    return token_record.token
+
+
+def verify_user(email):
+    user = get_user(email)
+    assert user is not None, f"User not found for {email}"
+    if user.is_active:
+        return
+
+    token = get_latest_token(email, AuthActionToken.PURPOSE_EMAIL_VERIFICATION)
+    resp = requests.post(f"{BASE_URL}/auth/verify-email/", json={"token": token})
+    assert resp.status_code == 200, f"Verification failed: {resp.text}"
+
+
 @pytest.fixture(scope="session")
 def register_user_one():
     """Register user one — skip if already exists."""
     resp = requests.post(f"{BASE_URL}/auth/register/", json=USER_ONE)
     assert resp.status_code in (201, 400), f"Unexpected status: {resp.status_code} {resp.text}"
+    verify_user(USER_ONE["email"])
     return USER_ONE
 
 
@@ -48,6 +90,7 @@ def register_user_two():
     """Register user two — skip if already exists."""
     resp = requests.post(f"{BASE_URL}/auth/register/", json=USER_TWO)
     assert resp.status_code in (201, 400), f"Unexpected status: {resp.status_code} {resp.text}"
+    verify_user(USER_TWO["email"])
     return USER_TWO
 
 
@@ -127,6 +170,7 @@ PAID_USER = {
 def register_paid_user():
     resp = requests.post(f"{BASE_URL}/auth/register/", json=PAID_USER)
     assert resp.status_code in (201, 400)
+    verify_user(PAID_USER["email"])
     return PAID_USER
 
 

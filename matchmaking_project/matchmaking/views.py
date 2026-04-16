@@ -5,20 +5,69 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth.password_validation import validate_password
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core.mail import send_mail
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import UserPlan, PaymentRecord, FeatureFlag, CompatibilityParameter
-from .models import UserProfile, PrivatePerson, CompatibilityScore
-from .serializers import (RegisterSerializer, UserProfileSerializer, PrivatePersonSerializer, CompatibilityScoreSerializer, CompatibilityRequestSerializer)
+from .models import UserProfile, PrivatePerson, CompatibilityScore, AuthActionToken
+from .serializers import (
+    RegisterSerializer, UserProfileSerializer, PrivatePersonSerializer,
+    CompatibilityScoreSerializer, CompatibilityRequestSerializer,
+)
 from .serializers import (PurchaseCreditsSerializer, PaymentRecordSerializer, CompatibilityParameterSerializer)
 from .serializers import EmailTokenObtainPairSerializer
+from .serializers import VerifyEmailSerializer, EmailAddressSerializer, ResetPasswordSerializer
 from .astrology_service import AstrologyService
 import logging
 logger = logging.getLogger(__name__)
+User = get_user_model()
+
+
+def send_auth_action_email(user, token_record):
+    base_url = settings.FRONTEND_BASE_URL.rstrip('/')
+    if token_record.purpose == AuthActionToken.PURPOSE_EMAIL_VERIFICATION:
+        path = settings.EMAIL_VERIFICATION_PATH
+        subject = 'Verify your Matchmaking account'
+        action_text = 'verify your email address'
+    else:
+        path = settings.PASSWORD_RESET_PATH
+        subject = 'Reset your Matchmaking password'
+        action_text = 'reset your password'
+
+    action_url = f"{base_url}{path}?token={token_record.token}"
+    message = (
+        f"Hello,\n\n"
+        f"Use the link below to {action_text}:\n"
+        f"{action_url}\n\n"
+        f"This link expires at {token_record.expires_at.isoformat()}.\n"
+    )
+    send_mail(
+        subject,
+        message,
+        settings.DEFAULT_FROM_EMAIL,
+        [user.email],
+        fail_silently=False,
+    )
+
+
+def issue_and_send_token(user, purpose):
+    if purpose == AuthActionToken.PURPOSE_EMAIL_VERIFICATION:
+        lifetime = settings.EMAIL_VERIFICATION_TOKEN_LIFETIME
+    else:
+        lifetime = settings.PASSWORD_RESET_TOKEN_LIFETIME
+    token_record = AuthActionToken.issue_token(user=user, purpose=purpose, lifetime=lifetime)
+    send_auth_action_email(user, token_record)
+    return token_record
 
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
+
+    def perform_create(self, serializer):
+        user = serializer.save()
+        issue_and_send_token(user, AuthActionToken.PURPOSE_EMAIL_VERIFICATION)
 
 
 class LoginView(TokenObtainPairView):
@@ -61,6 +110,76 @@ class ChangePasswordView(generics.GenericAPIView):
         user.save()
         return Response({'detail': 'Password changed successfully.'}, status=status.HTTP_200_OK)
 
+
+class VerifyEmailView(generics.GenericAPIView):
+    serializer_class = VerifyEmailSerializer
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        record = serializer.validated_data['record']
+        user = record.user
+        if not user.is_active:
+            user.is_active = True
+            user.save(update_fields=['is_active'])
+        record.mark_used()
+        return Response({'detail': 'Email verified successfully.'}, status=status.HTTP_200_OK)
+
+
+class ResendVerificationView(generics.GenericAPIView):
+    serializer_class = EmailAddressSerializer
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+        user = User.objects.filter(email__iexact=email).first()
+        if user and not user.is_active:
+            issue_and_send_token(user, AuthActionToken.PURPOSE_EMAIL_VERIFICATION)
+        return Response(
+            {'detail': 'If the account exists and is unverified, a verification email has been sent.'},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ForgotPasswordView(generics.GenericAPIView):
+    serializer_class = EmailAddressSerializer
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+        if user:
+            issue_and_send_token(user, AuthActionToken.PURPOSE_PASSWORD_RESET)
+        return Response(
+            {'detail': 'If the account exists, a password reset email has been sent.'},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ResetPasswordView(generics.GenericAPIView):
+    serializer_class = ResetPasswordSerializer
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        record = serializer.validated_data['record']
+        user = record.user
+        user.set_password(serializer.validated_data['new_password'])
+        user.save(update_fields=['password'])
+        record.mark_used()
+        AuthActionToken.objects.filter(
+            user=user,
+            purpose=AuthActionToken.PURPOSE_PASSWORD_RESET,
+            used_at__isnull=True,
+        ).exclude(pk=record.pk).delete()
+        return Response({'detail': 'Password reset successfully.'}, status=status.HTTP_200_OK)
+
 class UserProfileViewSet(viewsets.ModelViewSet):
     serializer_class = UserProfileSerializer
     permission_classes = [IsAuthenticated]
@@ -90,50 +209,6 @@ class PrivatePersonViewSet(viewsets.ModelViewSet):
         return PrivatePerson.objects.filter(owner=self.request.user)
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
-
-# class CompatibilityViewSet(viewsets.ViewSet):
-#     permission_classes = [IsAuthenticated]
-#     @action(detail=False, methods=['post'])
-#     def check(self, request):
-#         req_ser = CompatibilityRequestSerializer(data=request.data)
-#         req_ser.is_valid(raise_exception=True)
-#         data = req_ser.validated_data
-#         try:
-#             user_profile = get_object_or_404(UserProfile, user=request.user)
-#             if data.get('matched_user_id'):
-#                 target = get_object_or_404(UserProfile, id=data['matched_user_id'])
-#                 filter_kwargs = {'user': user_profile, 'matched_user': target, 'matched_private_person': None}
-#             else:
-#                 target = get_object_or_404(PrivatePerson, id=data['matched_private_person_id'], owner=request.user)
-#                 filter_kwargs = {'user': user_profile, 'matched_user': None, 'matched_private_person': target}
-#             compat_data = AstrologyService.get_compatibility(user_profile, target, force_refresh=data.get('force_refresh', False))
-#             defaults = {
-#                 'overall_score': compat_data['overall_score'],
-#                 'sun_compatibility': compat_data.get('sun_compatibility'),
-#                 'moon_compatibility': compat_data.get('moon_compatibility'),
-#                 'venus_compatibility': compat_data.get('venus_compatibility'),
-#                 'mars_compatibility': compat_data.get('mars_compatibility'),
-#                 'description': compat_data.get('description', ''),
-#                 'api_response': compat_data.get('api_response'),
-#             }
-#             obj, _ = CompatibilityScore.objects.update_or_create(**filter_kwargs, defaults=defaults)
-#             return Response(CompatibilityScoreSerializer(obj).data)
-#         except Exception as e:
-#             logger.error(f"Compatibility check error: {e}")
-#             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-#     @action(detail=False, methods=['get'])
-#     def history(self, request):
-#         profile = get_object_or_404(UserProfile, user=request.user)
-#         qs = CompatibilityScore.objects.filter(user=profile).order_by('-created_at')
-#         return Response(CompatibilityScoreSerializer(qs, many=True).data)
-
-#     @action(detail=False, methods=['get'])
-#     def top_matches(self, request):
-#         limit = int(request.query_params.get('limit', 10))
-#         profile = get_object_or_404(UserProfile, user=request.user)
-#         qs = CompatibilityScore.objects.filter(user=profile).order_by('-overall_score')[:limit]
-#         return Response(CompatibilityScoreSerializer(qs, many=True).data)
 
 
 class CompatibilityViewSet(viewsets.ViewSet):
