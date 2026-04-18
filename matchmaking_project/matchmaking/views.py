@@ -8,10 +8,11 @@ from django.contrib.auth.password_validation import validate_password
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
+from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import UserPlan, PaymentRecord, FeatureFlag, CompatibilityParameter
-from .models import UserProfile, UserMatchPreference, PrivatePerson, CompatibilityScore, AuthActionToken
+from .models import UserProfile, UserMatchPreference, PrivatePerson, CompatibilityScore, CompatibilityTransaction, AuthActionToken
 from .serializers import (
     RegisterSerializer, UserProfileSerializer, UserMatchPreferenceSerializer, PrivatePersonSerializer,
     CompatibilityScoreSerializer, CompatibilityRequestSerializer,
@@ -293,22 +294,35 @@ class CompatibilityViewSet(viewsets.ViewSet):
                 user_profile, target,
             )
 
-            # ── Consume one credit (paid first, then free) ──
-            credit_type = plan.consume_credit()
-            is_paid_session = (credit_type == 'paid')
+            with db_transaction.atomic():
+                # ── Consume one credit (paid first, then free) ──
+                credit_type = plan.consume_credit()
+                is_paid_session = (credit_type == 'paid')
 
-            # ── Persist result ──
-            defaults = {
-                'is_paid':             is_paid_session,
-                'overall_score':       compat_data['compatibility_score'],
-                'sun_compatibility':   compat_data.get('sun_compatibility'),
-                'moon_compatibility':  compat_data.get('moon_compatibility'),
-                'venus_compatibility': compat_data.get('venus_compatibility'),
-                'mars_compatibility':  compat_data.get('mars_compatibility'),
-                'description':         compat_data.get('description', ''),
-                'api_response':        compat_data.get('api_response'),
-            }
-            obj, _ = CompatibilityScore.objects.update_or_create(**filter_kwargs, defaults=defaults)
+                # ── Persist latest result ──
+                defaults = {
+                    'is_paid':             is_paid_session,
+                    'overall_score':       compat_data['compatibility_score'],
+                    'sun_compatibility':   compat_data.get('sun_compatibility'),
+                    'moon_compatibility':  compat_data.get('moon_compatibility'),
+                    'venus_compatibility': compat_data.get('venus_compatibility'),
+                    'mars_compatibility':  compat_data.get('mars_compatibility'),
+                    'description':         compat_data.get('description', ''),
+                    'api_response':        compat_data.get('api_response'),
+                }
+                obj, _ = CompatibilityScore.objects.update_or_create(**filter_kwargs, defaults=defaults)
+
+                # ── Append successful compatibility API transaction ──
+                CompatibilityTransaction.objects.create(
+                    **filter_kwargs,
+                    compatibility_score=obj,
+                    credit_type=credit_type,
+                    is_paid=is_paid_session,
+                    overall_score=compat_data['compatibility_score'],
+                    credits_remaining_after=plan.total_credits,
+                    description=compat_data.get('description', ''),
+                    api_response=compat_data.get('api_response'),
+                )
 
             # ── Serialize with plan context ──
             serializer = CompatibilityScoreSerializer(obj, context={'request': request})

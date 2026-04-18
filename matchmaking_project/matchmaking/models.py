@@ -232,6 +232,48 @@ class CompatibilityScore(models.Model):
         return self.matched_private_person is not None
     
 
+class CompatibilityTransaction(models.Model):
+    CREDIT_TYPE_CHOICES = [
+        ('free', 'Free'),
+        ('paid', 'Paid'),
+    ]
+
+    user                   = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='compatibility_transactions')
+    matched_user           = models.ForeignKey(UserProfile, on_delete=models.CASCADE, null=True, blank=True, related_name='compatibility_transaction_matches')
+    matched_private_person = models.ForeignKey(PrivatePerson, on_delete=models.CASCADE, null=True, blank=True, related_name='compatibility_transactions')
+    compatibility_score    = models.ForeignKey(CompatibilityScore, on_delete=models.CASCADE, related_name='transactions')
+    credit_type            = models.CharField(max_length=10, choices=CREDIT_TYPE_CHOICES)
+    is_paid                = models.BooleanField(default=False)
+    overall_score          = models.FloatField(validators=[MinValueValidator(0), MaxValueValidator(100)])
+    credits_remaining_after = models.PositiveIntegerField(default=0)
+    description            = models.TextField(blank=True)
+    api_response           = models.JSONField(null=True, blank=True)
+    created_at             = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user']),
+            models.Index(fields=['compatibility_score']),
+            models.Index(fields=['created_at']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                name='one_transaction_target_required',
+                check=(
+                    models.Q(matched_user__isnull=False, matched_private_person__isnull=True) |
+                    models.Q(matched_user__isnull=True,  matched_private_person__isnull=False)
+                )
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user} checked {self.get_match_target()} using {self.credit_type} credit"
+
+    def get_match_target(self):
+        return self.matched_user or self.matched_private_person
+
+
 class CompatibilityParameter(models.Model):
     """
     Admin defines each compatibility parameter and whether it is free or paid.

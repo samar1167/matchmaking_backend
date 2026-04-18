@@ -1,7 +1,8 @@
 from django.contrib import admin
 from .models import (
     UserProfile, UserMatchPreference, PrivatePerson, CompatibilityScore,
-    CompatibilityParameter, FeatureFlag, UserPlan, PaymentRecord, AuthActionToken,
+    CompatibilityTransaction, CompatibilityParameter, FeatureFlag, UserPlan,
+    PaymentRecord, AuthActionToken,
 )
 
 
@@ -58,6 +59,58 @@ class CompatibilityScoreAdmin(admin.ModelAdmin):
     @admin.display(description='User name', ordering='user__user__first_name')
     def user_name(self, obj):
         return self._user_display_name(obj.user.user)
+
+    @admin.display(description='Matched user name')
+    def matched_user_name(self, obj):
+        if obj.matched_user_id:
+            return self._user_display_name(obj.matched_user.user)
+        if obj.matched_private_person_id:
+            return obj.matched_private_person.name
+        return '-'
+
+    @admin.display(description='Matched user private', boolean=True)
+    def matched_user_is_private(self, obj):
+        return obj.matched_private_person_id is not None
+
+    def _user_display_name(self, user):
+        full_name = user.get_full_name()
+        return full_name or user.username or user.email
+
+
+@admin.register(CompatibilityTransaction)
+class CompatibilityTransactionAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'user',
+        'matched_user_name',
+        'matched_user_is_private',
+        'credit_type',
+        'overall_score',
+        'credits_remaining_after',
+        'created_at',
+    )
+    list_filter = ('credit_type', 'is_paid')
+    search_fields = ('user__user__email', 'user__user__username', 'matched_private_person__name')
+    readonly_fields = (
+        'user',
+        'matched_user',
+        'matched_private_person',
+        'compatibility_score',
+        'credit_type',
+        'is_paid',
+        'overall_score',
+        'credits_remaining_after',
+        'description',
+        'api_response',
+        'created_at',
+    )
+    ordering = ('-created_at',)
+    list_select_related = (
+        'user__user',
+        'matched_user__user',
+        'matched_private_person',
+        'compatibility_score',
+    )
 
     @admin.display(description='Matched user name')
     def matched_user_name(self, obj):
