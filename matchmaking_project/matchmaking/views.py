@@ -11,9 +11,9 @@ from django.core.mail import send_mail
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import UserPlan, PaymentRecord, FeatureFlag, CompatibilityParameter
-from .models import UserProfile, PrivatePerson, CompatibilityScore, AuthActionToken
+from .models import UserProfile, UserMatchPreference, PrivatePerson, CompatibilityScore, AuthActionToken
 from .serializers import (
-    RegisterSerializer, UserProfileSerializer, PrivatePersonSerializer,
+    RegisterSerializer, UserProfileSerializer, UserMatchPreferenceSerializer, PrivatePersonSerializer,
     CompatibilityScoreSerializer, CompatibilityRequestSerializer,
 )
 from .serializers import (PurchaseCreditsSerializer, PaymentRecordSerializer, CompatibilityParameterSerializer)
@@ -209,6 +209,54 @@ class PrivatePersonViewSet(viewsets.ModelViewSet):
         return PrivatePerson.objects.filter(owner=self.request.user)
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
+
+
+class UserMatchPreferenceViewSet(viewsets.ModelViewSet):
+    serializer_class = UserMatchPreferenceSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return UserMatchPreference.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    @action(detail=False, methods=['get', 'post', 'put', 'patch'])
+    def me(self, request):
+        try:
+            preferences = UserMatchPreference.objects.get(user=request.user)
+        except UserMatchPreference.DoesNotExist:
+            preferences = None
+
+        if request.method == 'GET':
+            if not preferences:
+                return Response({'detail': 'Match preferences not found.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response(UserMatchPreferenceSerializer(preferences).data)
+
+        serializer = UserMatchPreferenceSerializer(
+            preferences,
+            data=request.data,
+            partial=request.method in ('PUT', 'PATCH'),
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK if preferences else status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'])
+    def matches(self, request):
+        preferences = get_object_or_404(UserMatchPreference, user=request.user)
+        try:
+            limit = min(int(request.query_params.get('limit', 20)), 100)
+        except ValueError:
+            return Response({'error': 'limit must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if limit < 1:
+            return Response({'error': 'limit must be greater than zero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        candidates = preferences.apply_to_profiles(
+            UserProfile.objects.select_related('user', 'user__match_preferences')
+        )[:limit]
+        return Response(UserProfileSerializer(candidates, many=True).data)
 
 
 class CompatibilityViewSet(viewsets.ViewSet):

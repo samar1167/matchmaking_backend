@@ -4,7 +4,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
-    UserProfile, PrivatePerson, CompatibilityScore, CompatibilityParameter,
+    UserProfile, UserMatchPreference, PrivatePerson, CompatibilityScore, CompatibilityParameter,
     PaymentRecord, UserPlan, AuthActionToken,
 )
 
@@ -119,8 +119,8 @@ class ResetPasswordSerializer(serializers.Serializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
-    first_name = serializers.CharField(max_length=150, write_only=True)
-    last_name = serializers.CharField(max_length=150, write_only=True)
+    first_name = serializers.CharField(max_length=150, write_only=True, required=False, allow_blank=True)
+    last_name = serializers.CharField(max_length=150, write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = UserProfile
@@ -149,14 +149,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def validate_first_name(self, value):
         value = value.strip()
-        if not value:
-            raise serializers.ValidationError('First name is required.')
         return value
 
     def validate_last_name(self, value):
         value = value.strip()
-        if not value:
-            raise serializers.ValidationError('Last name is required.')
         return value
 
     def validate_profile_picture(self, value):
@@ -189,8 +185,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user_data = {
-            'first_name': validated_data.pop('first_name'),
-            'last_name': validated_data.pop('last_name'),
+            'first_name': validated_data.pop('first_name', None),
+            'last_name': validated_data.pop('last_name', None),
         }
         profile = UserProfile.objects.create(**validated_data)
         self._update_user(profile.user, user_data)
@@ -208,12 +204,74 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def _update_user(self, user, user_data):
         changed_fields = []
         for field in ('first_name', 'last_name'):
-            if field in user_data:
+            if user_data.get(field) is not None:
                 setattr(user, field, user_data[field])
                 changed_fields.append(field)
 
         if changed_fields:
             user.save(update_fields=changed_fields)
+
+
+class UserMatchPreferenceSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    public_match_criteria = serializers.DictField(read_only=True)
+    compatibility_weights = serializers.DictField(read_only=True)
+
+    class Meta:
+        model = UserMatchPreference
+        fields = (
+            'id',
+            'user',
+            'preferred_gender',
+            'preferred_age_min',
+            'preferred_age_max',
+            'preferred_city',
+            'preferred_distance_km',
+            'preferred_relationship_intent',
+            'preferred_religion_community',
+            'preferred_mother_tongue',
+            'preferred_education',
+            'preferred_profession',
+            'preferred_marital_status',
+            'modern_methods',
+            'karmic_glue',
+            'ancient_methods',
+            'deal_maker',
+            'sizzle',
+            'public_match_criteria',
+            'compatibility_weights',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = ('id', 'user', 'public_match_criteria', 'compatibility_weights', 'created_at', 'updated_at')
+
+    def validate(self, attrs):
+        instance = self.instance
+        min_age = attrs.get('preferred_age_min', getattr(instance, 'preferred_age_min', None))
+        max_age = attrs.get('preferred_age_max', getattr(instance, 'preferred_age_max', None))
+
+        if min_age is not None and max_age is not None and min_age > max_age:
+            raise serializers.ValidationError({
+                'preferred_age_min': 'Preferred minimum age cannot be greater than preferred maximum age.'
+            })
+
+        return attrs
+
+    def validate_preferred_city(self, value):
+        return value.strip()
+
+    def validate_preferred_religion_community(self, value):
+        return value.strip()
+
+    def validate_preferred_mother_tongue(self, value):
+        return value.strip()
+
+    def validate_preferred_education(self, value):
+        return value.strip()
+
+    def validate_preferred_profession(self, value):
+        return value.strip()
+
 
 class PrivatePersonSerializer(serializers.ModelSerializer):
     class Meta:

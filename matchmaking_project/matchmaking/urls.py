@@ -3,12 +3,13 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     RegisterView, LoginView, LogoutView, ChangePasswordView,
     VerifyEmailView, ResendVerificationView, ForgotPasswordView, ResetPasswordView,
-    UserProfileViewSet, PrivatePersonViewSet,
+    UserProfileViewSet, UserMatchPreferenceViewSet, PrivatePersonViewSet,
     CompatibilityViewSet, PlanViewSet,
 )
 
 router = DefaultRouter()
 router.register(r'profiles',        UserProfileViewSet,   basename='profile')
+router.register(r'match-preferences', UserMatchPreferenceViewSet, basename='match-preference')
 router.register(r'private-persons', PrivatePersonViewSet, basename='private-person')
 router.register(r'compatibility',   CompatibilityViewSet, basename='compatibility')
 router.register(r'plan',            PlanViewSet,          basename='plan')

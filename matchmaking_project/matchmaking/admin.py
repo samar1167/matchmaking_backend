@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    UserProfile, PrivatePerson, CompatibilityScore,
+    UserProfile, UserMatchPreference, PrivatePerson, CompatibilityScore,
     CompatibilityParameter, FeatureFlag, UserPlan, PaymentRecord, AuthActionToken,
 )
 
@@ -17,6 +17,28 @@ class UserProfileAdmin(admin.ModelAdmin):
         return obj.user.last_name
 
 
+@admin.register(UserMatchPreference)
+class UserMatchPreferenceAdmin(admin.ModelAdmin):
+    list_display = (
+        'user',
+        'preferred_gender',
+        'preferred_age_min',
+        'preferred_age_max',
+        'preferred_city',
+        'preferred_relationship_intent',
+        'updated_at',
+    )
+    list_filter = ('preferred_gender', 'preferred_relationship_intent', 'preferred_marital_status')
+    search_fields = (
+        'user__email',
+        'preferred_city',
+        'preferred_religion_community',
+        'preferred_mother_tongue',
+        'preferred_education',
+        'preferred_profession',
+    )
+
+
 @admin.register(PrivatePerson)
 class PrivatePersonAdmin(admin.ModelAdmin):
     list_display  = ('name', 'owner', 'date_of_birth', 'created_at')
@@ -25,8 +47,33 @@ class PrivatePersonAdmin(admin.ModelAdmin):
 
 @admin.register(CompatibilityScore)
 class CompatibilityScoreAdmin(admin.ModelAdmin):
-    list_display  = ('user', 'overall_score', 'is_paid', 'is_private_match', 'created_at')
+    list_display  = ('user', 'user_name', 'matched_user_name', 'matched_user_is_private', 'overall_score', 'is_paid', 'created_at')
     ordering      = ('-overall_score',)
+    list_select_related = (
+        'user__user',
+        'matched_user__user',
+        'matched_private_person',
+    )
+
+    @admin.display(description='User name', ordering='user__user__first_name')
+    def user_name(self, obj):
+        return self._user_display_name(obj.user.user)
+
+    @admin.display(description='Matched user name')
+    def matched_user_name(self, obj):
+        if obj.matched_user_id:
+            return self._user_display_name(obj.matched_user.user)
+        if obj.matched_private_person_id:
+            return obj.matched_private_person.name
+        return '-'
+
+    @admin.display(description='Matched user private', boolean=True)
+    def matched_user_is_private(self, obj):
+        return obj.matched_private_person_id is not None
+
+    def _user_display_name(self, user):
+        full_name = user.get_full_name()
+        return full_name or user.username or user.email
 
 
 @admin.register(CompatibilityParameter)

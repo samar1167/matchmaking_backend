@@ -41,11 +41,12 @@ class TestUserProfile:
         resp = requests.get(f"{BASE_URL}/profiles/me/")
         assert resp.status_code == 401
 
-    def test_create_profile_missing_required_fields(self, auth_headers_one):
+    def test_create_profile_with_partial_fields(self, auth_headers_one):
         resp = requests.post(f"{BASE_URL}/profiles/me/", json={
             "place_of_birth": "Mumbai",
         }, headers=auth_headers_one)
-        assert resp.status_code == 400
+        assert resp.status_code in (200, 201)
+        assert resp.json()["place_of_birth"] == "Mumbai"
 
     def test_profiles_isolated_between_users(self, profile_user_one, auth_headers_two, profile_user_two):
         """User two cannot see user one's profile via /me/"""

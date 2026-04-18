@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from datetime import datetime
 import secrets
+import math
 from django.utils import timezone
 
 
@@ -13,12 +14,12 @@ def user_profile_picture_upload_to(instance, filename):
 
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='astro_profile')
-    date_of_birth  = models.DateField()
-    time_of_birth  = models.TimeField()
-    place_of_birth = models.CharField(max_length=255)
+    date_of_birth  = models.DateField(null=True, blank=True)
+    time_of_birth  = models.TimeField(null=True, blank=True)
+    place_of_birth = models.CharField(max_length=255, null=True, blank=True)
     latitude       = models.FloatField(null=True, blank=True)
     longitude      = models.FloatField(null=True, blank=True)
-    timezone       = models.CharField(max_length=50, default='UTC')
+    timezone       = models.CharField(max_length=50, null=True, blank=True, default='UTC')
     profile_picture = models.ImageField(upload_to=user_profile_picture_upload_to, null=True, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)
@@ -30,7 +31,140 @@ class UserProfile(models.Model):
         return f"{self.user.username}'s profile"
 
     def get_birth_datetime(self):
-        return datetime.combine(self.date_of_birth, self.time_of_birth)
+        if not self.date_of_birth:
+            return None
+        time = self.time_of_birth or datetime.min.time()
+        return datetime.combine(self.date_of_birth, time)
+
+
+class UserMatchPreference(models.Model):
+    GENDER_CHOICES = [
+        ('male', 'Male'),
+        ('female', 'Female'),
+        ('non_binary', 'Non-binary'),
+        ('other', 'Other'),
+        ('any', 'Any'),
+    ]
+
+    RELATIONSHIP_INTENT_CHOICES = [
+        ('marriage', 'Marriage'),
+        ('long_term', 'Long-term relationship'),
+        ('casual', 'Casual dating'),
+        ('friendship', 'Friendship'),
+        ('open_to_explore', 'Open to explore'),
+    ]
+
+    MARITAL_STATUS_CHOICES = [
+        ('never_married', 'Never married'),
+        ('divorced', 'Divorced'),
+        ('widowed', 'Widowed'),
+        ('separated', 'Separated'),
+        ('annulled', 'Annulled'),
+        ('any', 'Any'),
+    ]
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='match_preferences')
+
+    preferred_gender = models.CharField(max_length=30, choices=GENDER_CHOICES, blank=True)
+    preferred_age_min = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(18), MaxValueValidator(120)])
+    preferred_age_max = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(18), MaxValueValidator(120)])
+    preferred_city = models.CharField(max_length=100, blank=True)
+    preferred_distance_km = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(20000)])
+    preferred_relationship_intent = models.CharField(max_length=30, choices=RELATIONSHIP_INTENT_CHOICES, blank=True)
+    preferred_religion_community = models.CharField(max_length=100, blank=True)
+    preferred_mother_tongue = models.CharField(max_length=100, blank=True)
+    preferred_education = models.CharField(max_length=150, blank=True)
+    preferred_profession = models.CharField(max_length=150, blank=True)
+    preferred_marital_status = models.CharField(max_length=30, choices=MARITAL_STATUS_CHOICES, blank=True)
+
+    modern_methods = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    karmic_glue = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    ancient_methods = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    deal_maker = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    sizzle = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user']),
+            models.Index(fields=['preferred_gender']),
+            models.Index(fields=['preferred_relationship_intent']),
+            models.Index(fields=['preferred_city']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username}'s match preferences"
+
+    @property
+    def compatibility_weights(self):
+        return {
+            'modern_methods': self.modern_methods,
+            'karmic_glue': self.karmic_glue,
+            'ancient_methods': self.ancient_methods,
+            'deal_maker': self.deal_maker,
+            'sizzle': self.sizzle,
+        }
+
+    def weighted_compatibility_score(self, scores):
+        weighted_total = 0
+        total_weight = 0
+
+        for key, weight in self.compatibility_weights.items():
+            score = scores.get(key)
+            if score is None or weight == 0:
+                continue
+            weighted_total += score * weight
+            total_weight += weight
+
+        if total_weight == 0:
+            return None
+
+        return round(weighted_total / total_weight, 2)
+
+    @property
+    def public_match_criteria(self):
+        return {
+            'gender': self.preferred_gender,
+            'age_min': self.preferred_age_min,
+            'age_max': self.preferred_age_max,
+            'city': self.preferred_city,
+            'distance_km': self.preferred_distance_km,
+            'relationship_intent': self.preferred_relationship_intent,
+            'religion_community': self.preferred_religion_community,
+            'mother_tongue': self.preferred_mother_tongue,
+            'education': self.preferred_education,
+            'profession': self.preferred_profession,
+            'marital_status': self.preferred_marital_status,
+        }
+
+    def apply_to_profiles(self, queryset=None):
+        queryset = queryset or UserProfile.objects.all()
+        queryset = queryset.exclude(user=self.user)
+
+        if self.preferred_city:
+            queryset = queryset.filter(place_of_birth__iexact=self.preferred_city)
+        if self.preferred_distance_km:
+            try:
+                origin = self.user.astro_profile
+            except UserProfile.DoesNotExist:
+                origin = None
+
+            if origin and origin.latitude is not None and origin.longitude is not None:
+                latitude_delta = self.preferred_distance_km / 111
+                longitude_scale = max(math.cos(math.radians(origin.latitude)), 0.01)
+                longitude_delta = self.preferred_distance_km / (111 * longitude_scale)
+                queryset = queryset.filter(
+                    latitude__isnull=False,
+                    longitude__isnull=False,
+                    latitude__gte=origin.latitude - latitude_delta,
+                    latitude__lte=origin.latitude + latitude_delta,
+                    longitude__gte=origin.longitude - longitude_delta,
+                    longitude__lte=origin.longitude + longitude_delta,
+                )
+
+        return queryset
 
 
 class PrivatePerson(models.Model):
@@ -241,8 +375,8 @@ class AuthActionToken(models.Model):
     class Meta:
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['user', 'purpose']),
-            models.Index(fields=['purpose', 'expires_at']),
+            models.Index(fields=['user', 'purpose'], name='matchmaking_user_id_6856b8_idx'),
+            models.Index(fields=['purpose', 'expires_at'], name='matchmaking_purpose_0bf478_idx'),
         ]
 
     def __str__(self):
