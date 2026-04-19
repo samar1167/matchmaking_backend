@@ -96,15 +96,9 @@ class PotentialMatchFinder:
     DEMOGRAPHIC_WEIGHT = 0.30
 
     DEMOGRAPHIC_COMPONENT_WEIGHTS = {
-        "age": 25,
-        "city": 15,
-        "distance": 15,
+        "age": 45,
         "gender": 10,
         "relationship_intent": 10,
-        "religion_community": 7,
-        "mother_tongue": 6,
-        "education": 6,
-        "profession": 4,
         "marital_status": 2,
         "reciprocal": 15,
     }
@@ -141,6 +135,7 @@ class PotentialMatchFinder:
         # Registered users only. No PrivatePerson table is queried here.
         queryset = queryset.select_related("user", "user__match_preferences")
         queryset = queryset.exclude(user=self.user)
+        queryset = queryset.filter(public_match=True)
         queryset = queryset.filter(user__match_preferences__isnull=False)
 
         # Use broad database filters first, then compute the weighted score in
@@ -164,9 +159,6 @@ class PotentialMatchFinder:
                 dob_filters &= self.Q(date_of_birth__gt=earliest_birth_date)
 
             queryset = queryset.filter(dob_filters)
-
-        if self.preferences.preferred_city:
-            queryset = queryset.filter(place_of_birth__iexact=self.preferences.preferred_city)
 
         return queryset
 
@@ -232,29 +224,11 @@ class PotentialMatchFinder:
         if age_score == 100 and candidate_age is not None:
             reasons.append(f"age {candidate_age} fits preference")
 
-        city_score = self._exact_text_score(
-            self.preferences.preferred_city,
-            candidate.place_of_birth,
-            empty_preference_score=100,
-        )
-        components.append(("city", city_score))
-        if city_score == 100 and self.preferences.preferred_city:
-            reasons.append("city matches preference")
-
-        distance_score = self._distance_score(candidate)
-        components.append(("distance", distance_score))
-        if distance_score == 100 and self.preferences.preferred_distance_km:
-            reasons.append("within preferred distance")
-
         # These fields are not currently present on UserProfile in this project.
         # If you later add them, the dynamic lookup below starts scoring them.
         field_pairs = [
             ("gender", "preferred_gender", "gender"),
             ("relationship_intent", "preferred_relationship_intent", "relationship_intent"),
-            ("religion_community", "preferred_religion_community", "religion_community"),
-            ("mother_tongue", "preferred_mother_tongue", "mother_tongue"),
-            ("education", "preferred_education", "education"),
-            ("profession", "preferred_profession", "profession"),
             ("marital_status", "preferred_marital_status", "marital_status"),
         ]
 
@@ -286,30 +260,10 @@ class PotentialMatchFinder:
             candidate_preferences.preferred_age_min,
             candidate_preferences.preferred_age_max,
         )
-        city_score = self._exact_text_score(
-            candidate_preferences.preferred_city,
-            self.user_profile.place_of_birth,
-            empty_preference_score=100,
-        )
         return self._weighted_average(
-            [("age", age_score), ("city", city_score)],
-            {"age": 70, "city": 30},
+            [("age", age_score)],
+            {"age": 100},
         )
-
-    def _distance_score(self, candidate: Any) -> float:
-        if not self.preferences.preferred_distance_km:
-            return 100
-
-        if not self._has_coordinates(self.user_profile) or not self._has_coordinates(candidate):
-            return 0
-
-        distance_km = self._haversine_km(
-            self.user_profile.latitude,
-            self.user_profile.longitude,
-            candidate.latitude,
-            candidate.longitude,
-        )
-        return 100 if distance_km <= self.preferences.preferred_distance_km else 0
 
     @staticmethod
     def _weighted_average(items: Iterable[Tuple[str, float]], weights: Dict[str, int]) -> float:
@@ -381,24 +335,6 @@ class PotentialMatchFinder:
         except ValueError:
             # February 29 becomes February 28 in non-leap target years.
             return value.replace(year=value.year - years, day=28)
-
-    @staticmethod
-    def _has_coordinates(profile: Any) -> bool:
-        return profile.latitude is not None and profile.longitude is not None
-
-    @staticmethod
-    def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        from math import asin, cos, radians, sin, sqrt
-
-        earth_radius_km = 6371
-        d_lat = radians(lat2 - lat1)
-        d_lon = radians(lon2 - lon1)
-        a = (
-            sin(d_lat / 2) ** 2
-            + cos(radians(lat1)) * cos(radians(lat2)) * sin(d_lon / 2) ** 2
-        )
-        return 2 * earth_radius_km * asin(sqrt(a))
-
 
 def find_potential_matches(
     user: Any,

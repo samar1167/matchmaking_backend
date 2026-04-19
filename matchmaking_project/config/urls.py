@@ -19,6 +19,10 @@ schema_view = get_schema_view(
     authentication_classes=[], 
 )
 
+admin.site.site_header = "Luster Admin Console"
+admin.site.site_title = "Luster Admin Console"
+admin.site.index_title = "Luster Admin Console"
+
 urlpatterns = [
     path('admin/', admin.site.urls),
 

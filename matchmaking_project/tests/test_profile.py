@@ -19,6 +19,7 @@ class TestUserProfile:
         data = resp.json()
         assert data["date_of_birth"] == "1990-05-15"
         assert data["place_of_birth"] == "Mumbai"
+        assert data["public_match"] is True
         assert "user" in data
 
     def test_get_profile(self, profile_user_one, auth_headers_one):
@@ -27,15 +28,25 @@ class TestUserProfile:
         data = resp.json()
         assert "date_of_birth" in data
         assert "place_of_birth" in data
+        assert "public_match" in data
 
     def test_update_profile_partial(self, profile_user_one, auth_headers_one):
         resp = requests.patch(f"{BASE_URL}/profiles/me/", json={
             "place_of_birth": "Delhi",
             "latitude": 28.6139,
             "longitude": 77.2090,
+            "public_match": False,
         }, headers=auth_headers_one)
         assert resp.status_code == 200
-        assert resp.json()["place_of_birth"] == "Delhi"
+        data = resp.json()
+        assert data["place_of_birth"] == "Delhi"
+        assert data["public_match"] is False
+
+        restore = requests.patch(f"{BASE_URL}/profiles/me/", json={
+            "public_match": True,
+        }, headers=auth_headers_one)
+        assert restore.status_code == 200
+        assert restore.json()["public_match"] is True
 
     def test_get_profile_unauthenticated(self):
         resp = requests.get(f"{BASE_URL}/profiles/me/")

@@ -3,7 +3,6 @@ from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from datetime import datetime
 import secrets
-import math
 from django.utils import timezone
 
 
@@ -21,6 +20,7 @@ class UserProfile(models.Model):
     longitude      = models.FloatField(null=True, blank=True)
     timezone       = models.CharField(max_length=50, null=True, blank=True, default='UTC')
     profile_picture = models.ImageField(upload_to=user_profile_picture_upload_to, null=True, blank=True)
+    public_match   = models.BooleanField(default=True)
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)
 
@@ -68,20 +68,14 @@ class UserMatchPreference(models.Model):
     preferred_gender = models.CharField(max_length=30, choices=GENDER_CHOICES, blank=True)
     preferred_age_min = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(18), MaxValueValidator(120)])
     preferred_age_max = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(18), MaxValueValidator(120)])
-    preferred_city = models.CharField(max_length=100, blank=True)
-    preferred_distance_km = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(20000)])
     preferred_relationship_intent = models.CharField(max_length=30, choices=RELATIONSHIP_INTENT_CHOICES, blank=True)
-    preferred_religion_community = models.CharField(max_length=100, blank=True)
-    preferred_mother_tongue = models.CharField(max_length=100, blank=True)
-    preferred_education = models.CharField(max_length=150, blank=True)
-    preferred_profession = models.CharField(max_length=150, blank=True)
     preferred_marital_status = models.CharField(max_length=30, choices=MARITAL_STATUS_CHOICES, blank=True)
 
-    modern_methods = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    karmic_glue = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    ancient_methods = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    deal_maker = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    sizzle = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    modern_methods = models.BooleanField(default=False)
+    karmic_glue = models.BooleanField(default=False)
+    ancient_methods = models.BooleanField(default=False)
+    deal_maker = models.BooleanField(default=False)
+    sizzle = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -91,7 +85,6 @@ class UserMatchPreference(models.Model):
             models.Index(fields=['user']),
             models.Index(fields=['preferred_gender']),
             models.Index(fields=['preferred_relationship_intent']),
-            models.Index(fields=['preferred_city']),
         ]
 
     def __str__(self):
@@ -129,40 +122,14 @@ class UserMatchPreference(models.Model):
             'gender': self.preferred_gender,
             'age_min': self.preferred_age_min,
             'age_max': self.preferred_age_max,
-            'city': self.preferred_city,
-            'distance_km': self.preferred_distance_km,
             'relationship_intent': self.preferred_relationship_intent,
-            'religion_community': self.preferred_religion_community,
-            'mother_tongue': self.preferred_mother_tongue,
-            'education': self.preferred_education,
-            'profession': self.preferred_profession,
             'marital_status': self.preferred_marital_status,
         }
 
     def apply_to_profiles(self, queryset=None):
         queryset = queryset or UserProfile.objects.all()
         queryset = queryset.exclude(user=self.user)
-
-        if self.preferred_city:
-            queryset = queryset.filter(place_of_birth__iexact=self.preferred_city)
-        if self.preferred_distance_km:
-            try:
-                origin = self.user.astro_profile
-            except UserProfile.DoesNotExist:
-                origin = None
-
-            if origin and origin.latitude is not None and origin.longitude is not None:
-                latitude_delta = self.preferred_distance_km / 111
-                longitude_scale = max(math.cos(math.radians(origin.latitude)), 0.01)
-                longitude_delta = self.preferred_distance_km / (111 * longitude_scale)
-                queryset = queryset.filter(
-                    latitude__isnull=False,
-                    longitude__isnull=False,
-                    latitude__gte=origin.latitude - latitude_delta,
-                    latitude__lte=origin.latitude + latitude_delta,
-                    longitude__gte=origin.longitude - longitude_delta,
-                    longitude__lte=origin.longitude + longitude_delta,
-                )
+        queryset = queryset.filter(public_match=True)
 
         return queryset
 

@@ -5,8 +5,8 @@ import json
 
 
 # VARIABLES
-EMAIL = ""
-API_URL = 'https://dilaanu.com'
+EMAIL = "samar1167@gmail.com"
+API_URL = 'https://dilaanupro.com'
 PUBLIC_KEY = '1qqLcmNVTjjXKskeJJx8cx9O'
 SECRET_KEY = 'card group whatever rate same call court particular person purpose'
 

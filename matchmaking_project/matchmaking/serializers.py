@@ -136,6 +136,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'longitude',
             'timezone',
             'profile_picture',
+            'public_match',
             'created_at',
             'updated_at',
         )
@@ -225,13 +226,7 @@ class UserMatchPreferenceSerializer(serializers.ModelSerializer):
             'preferred_gender',
             'preferred_age_min',
             'preferred_age_max',
-            'preferred_city',
-            'preferred_distance_km',
             'preferred_relationship_intent',
-            'preferred_religion_community',
-            'preferred_mother_tongue',
-            'preferred_education',
-            'preferred_profession',
             'preferred_marital_status',
             'modern_methods',
             'karmic_glue',
@@ -256,21 +251,6 @@ class UserMatchPreferenceSerializer(serializers.ModelSerializer):
             })
 
         return attrs
-
-    def validate_preferred_city(self, value):
-        return value.strip()
-
-    def validate_preferred_religion_community(self, value):
-        return value.strip()
-
-    def validate_preferred_mother_tongue(self, value):
-        return value.strip()
-
-    def validate_preferred_education(self, value):
-        return value.strip()
-
-    def validate_preferred_profession(self, value):
-        return value.strip()
 
 
 class PrivatePersonSerializer(serializers.ModelSerializer):

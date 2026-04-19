@@ -8,7 +8,8 @@ from .models import (
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display  = ('user', 'user_first_name', 'user_last_name', 'date_of_birth', 'place_of_birth', 'created_at')
+    list_display  = ('user', 'user_first_name', 'user_last_name', 'date_of_birth', 'place_of_birth', 'public_match', 'created_at')
+    list_filter = ('public_match',)
     search_fields = ('user__email', 'user__first_name', 'user__last_name', 'place_of_birth')
 
     def user_first_name(self, obj):
@@ -25,18 +26,12 @@ class UserMatchPreferenceAdmin(admin.ModelAdmin):
         'preferred_gender',
         'preferred_age_min',
         'preferred_age_max',
-        'preferred_city',
         'preferred_relationship_intent',
         'updated_at',
     )
     list_filter = ('preferred_gender', 'preferred_relationship_intent', 'preferred_marital_status')
     search_fields = (
         'user__email',
-        'preferred_city',
-        'preferred_religion_community',
-        'preferred_mother_tongue',
-        'preferred_education',
-        'preferred_profession',
     )
 
 
