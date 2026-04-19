@@ -12,7 +12,13 @@ def user_profile_picture_upload_to(instance, filename):
 
 
 class UserProfile(models.Model):
+    GENDER_CHOICES = [
+        ('male', 'Male'),
+        ('female', 'Female'),
+    ]
+
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='astro_profile')
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, blank=True)
     date_of_birth  = models.DateField(null=True, blank=True)
     time_of_birth  = models.TimeField(null=True, blank=True)
     place_of_birth = models.CharField(max_length=255, null=True, blank=True)
@@ -25,7 +31,10 @@ class UserProfile(models.Model):
     updated_at     = models.DateTimeField(auto_now=True)
 
     class Meta:
-        indexes = [models.Index(fields=['user'])]
+        indexes = [
+            models.Index(fields=['user']),
+            models.Index(fields=['gender']),
+        ]
 
     def __str__(self):
         return f"{self.user.username}'s profile"

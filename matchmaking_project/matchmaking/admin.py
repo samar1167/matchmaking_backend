@@ -8,8 +8,8 @@ from .models import (
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display  = ('user', 'user_first_name', 'user_last_name', 'date_of_birth', 'place_of_birth', 'public_match', 'created_at')
-    list_filter = ('public_match',)
+    list_display  = ('user', 'user_first_name', 'user_last_name', 'gender', 'date_of_birth', 'place_of_birth', 'public_match', 'created_at')
+    list_filter = ('gender', 'public_match')
     search_fields = ('user__email', 'user__first_name', 'user__last_name', 'place_of_birth')
 
     def user_first_name(self, obj):

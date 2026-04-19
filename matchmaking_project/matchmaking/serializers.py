@@ -129,6 +129,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'user',
             'first_name',
             'last_name',
+            'gender',
             'date_of_birth',
             'time_of_birth',
             'place_of_birth',

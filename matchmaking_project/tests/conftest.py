@@ -40,6 +40,7 @@ PRIVATE_PERSON = {
 }
 
 PROFILE_ONE = {
+    "gender": "male",
     "date_of_birth": "1990-05-15",
     "time_of_birth": "14:30:00",
     "place_of_birth": "Mumbai",
@@ -141,6 +142,7 @@ def profile_user_one(auth_headers_one):
 def profile_user_two(auth_headers_two):
     """Create profile for user two."""
     profile = {
+        "gender": "female",
         "date_of_birth": "1993-11-22",
         "time_of_birth": "09:00:00",
         "place_of_birth": "Delhi",
