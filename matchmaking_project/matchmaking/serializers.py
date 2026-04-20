@@ -1,10 +1,11 @@
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
-    UserProfile, UserMatchPreference, PrivatePerson, CompatibilityScore, CompatibilityParameter,
+    UserProfile, UserMatchPreference, UserMatch, UserConnection, PrivatePerson, CompatibilityScore, CompatibilityParameter,
     PaymentRecord, UserPlan, AuthActionToken,
 )
 
@@ -66,6 +67,9 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
             if user and not user.is_active:
                 raise AuthenticationFailed('Email verification is required before login.')
             raise AuthenticationFailed('No active account found with the given credentials.')
+
+        self.user.last_login = timezone.now()
+        self.user.save(update_fields=['last_login'])
 
         refresh = self.get_token(self.user)
         return {
@@ -252,6 +256,80 @@ class UserMatchPreferenceSerializer(serializers.ModelSerializer):
             })
 
         return attrs
+
+
+class UserMatchProfileSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+
+    class Meta:
+        model = UserProfile
+        fields = (
+            'id',
+            'user',
+            'first_name',
+            'last_name',
+            'profile_picture',
+            'public_match',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = fields
+
+
+class UserMatchSerializer(serializers.ModelSerializer):
+    matched_user = UserMatchProfileSerializer(read_only=True)
+
+    class Meta:
+        model = UserMatch
+        fields = ('id', 'matched_user', 'score', 'rank', 'created_at')
+        read_only_fields = fields
+
+
+class UserConnectionRequestSerializer(serializers.Serializer):
+    matched_user_profile_id = serializers.IntegerField()
+
+
+class UserConnectionProfileSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+
+    class Meta:
+        model = UserProfile
+        fields = ('id', 'first_name', 'last_name', 'place_of_birth')
+
+
+class UserConnectionSerializer(serializers.ModelSerializer):
+    requester = UserConnectionProfileSerializer(read_only=True)
+    receiver = UserConnectionProfileSerializer(read_only=True)
+    other_user = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserConnection
+        fields = (
+            'id',
+            'requester',
+            'receiver',
+            'other_user',
+            'status',
+            'requested_at',
+            'responded_at',
+            'updated_at',
+        )
+        read_only_fields = fields
+
+    def get_other_user(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+
+        current_profile = getattr(request.user, 'astro_profile', None)
+        if not current_profile:
+            return None
+
+        other = obj.receiver if obj.requester_id == current_profile.id else obj.requester
+        return UserConnectionProfileSerializer(other, context=self.context).data
 
 
 class PrivatePersonSerializer(serializers.ModelSerializer):

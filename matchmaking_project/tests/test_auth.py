@@ -1,5 +1,6 @@
 import pytest
 import requests
+from django.contrib.auth.models import User
 from conftest import get_latest_token
 from matchmaking.models import AuthActionToken
 
@@ -69,6 +70,9 @@ class TestLogin:
         assert login.status_code == 200
 
     def test_login_success(self, register_user_one):
+        user = User.objects.get(email__iexact="one@test.com")
+        previous_login = user.last_login
+
         resp = requests.post(f"{BASE_URL}/auth/login/", json={
             "email": "one@test.com",
             "password": "TestPass123!",
@@ -77,6 +81,11 @@ class TestLogin:
         data = resp.json()
         assert "access" in data
         assert "refresh" in data
+
+        user.refresh_from_db()
+        assert user.last_login is not None
+        if previous_login is not None:
+            assert user.last_login >= previous_login
 
     def test_login_wrong_password(self, register_user_one):
         resp = requests.post(f"{BASE_URL}/auth/login/", json={

@@ -143,6 +143,76 @@ class UserMatchPreference(models.Model):
         return queryset
 
 
+class UserMatch(models.Model):
+    user = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='matches')
+    matched_user = models.ForeignKey(UserProfile, on_delete=models.CASCADE)
+    score = models.FloatField()
+    rank = models.IntegerField()
+    created_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'matched_user')
+        ordering = ['rank', '-score']
+        indexes = [
+            models.Index(fields=['user', '-score']),
+            models.Index(fields=['user', 'rank']),
+        ]
+
+    def __str__(self):
+        return f"{self.user} matched with {self.matched_user} (rank {self.rank}, score {self.score})"
+
+
+class UserConnection(models.Model):
+    STATUS_PENDING = 'pending'
+    STATUS_ACCEPTED = 'accepted'
+    STATUS_DECLINED = 'declined'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_DISCONNECTED = 'disconnected'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_ACCEPTED, 'Accepted'),
+        (STATUS_DECLINED, 'Declined'),
+        (STATUS_CANCELLED, 'Cancelled'),
+        (STATUS_DISCONNECTED, 'Disconnected'),
+    ]
+
+    requester = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='sent_connections')
+    receiver = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='received_connections')
+    profile_low = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='+')
+    profile_high = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='+')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['requester', 'status', '-updated_at']),
+            models.Index(fields=['receiver', 'status', '-updated_at']),
+            models.Index(fields=['profile_low', 'profile_high']),
+            models.Index(fields=['status', '-updated_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=['profile_low', 'profile_high'], name='unique_user_connection_pair'),
+            models.CheckConstraint(
+                check=~models.Q(requester=models.F('receiver')),
+                name='user_connection_requester_not_receiver',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.requester_id and self.receiver_id:
+            low_id, high_id = sorted((self.requester_id, self.receiver_id))
+            self.profile_low_id = low_id
+            self.profile_high_id = high_id
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.requester} requested {self.receiver} ({self.status})"
+
+
 class PrivatePerson(models.Model):
     owner          = models.ForeignKey(User, on_delete=models.CASCADE, related_name='private_persons')
     name           = models.CharField(max_length=255)

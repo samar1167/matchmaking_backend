@@ -8,13 +8,16 @@ from django.contrib.auth.password_validation import validate_password
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
+from django.db import IntegrityError
 from django.db import transaction as db_transaction
+from django.db.models import Exists, OuterRef, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import UserPlan, PaymentRecord, FeatureFlag, CompatibilityParameter
-from .models import UserProfile, UserMatchPreference, PrivatePerson, CompatibilityScore, CompatibilityTransaction, AuthActionToken
+from .models import UserProfile, UserMatchPreference, UserMatch, UserConnection, PrivatePerson, CompatibilityScore, CompatibilityTransaction, AuthActionToken
 from .serializers import (
     RegisterSerializer, UserProfileSerializer, UserMatchPreferenceSerializer, PrivatePersonSerializer,
+    UserMatchSerializer, UserConnectionSerializer, UserConnectionRequestSerializer,
     CompatibilityScoreSerializer, CompatibilityRequestSerializer,
 )
 from .serializers import (PurchaseCreditsSerializer, PaymentRecordSerializer, CompatibilityParameterSerializer)
@@ -258,6 +261,191 @@ class UserMatchPreferenceViewSet(viewsets.ModelViewSet):
             UserProfile.objects.select_related('user', 'user__match_preferences')
         )[:limit]
         return Response(UserProfileSerializer(candidates, many=True).data)
+
+
+class UserMatchViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request):
+        profile = get_object_or_404(UserProfile, user=self.request.user)
+        existing_connections = UserConnection.objects.filter(
+            Q(requester=profile, receiver=OuterRef('matched_user')) |
+            Q(requester=OuterRef('matched_user'), receiver=profile)
+        )
+        matches = (
+            UserMatch.objects
+            .filter(user=profile)
+            .annotate(has_existing_connection=Exists(existing_connections))
+            .filter(has_existing_connection=False)
+            .select_related('matched_user__user')
+            .order_by('?')[:3]
+        )
+        return Response(UserMatchSerializer(matches, many=True).data)
+
+
+class UserConnectionViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def _current_profile(self, request):
+        return get_object_or_404(UserProfile, user=request.user)
+
+    def _base_queryset(self, profile):
+        return (
+            UserConnection.objects
+            .filter(Q(requester=profile) | Q(receiver=profile))
+            .select_related('requester__user', 'receiver__user')
+            .order_by('-updated_at')
+        )
+
+    def _serialize(self, connection, request, status_code=status.HTTP_200_OK):
+        serializer = UserConnectionSerializer(connection, context={'request': request})
+        return Response(serializer.data, status=status_code)
+
+    def list(self, request):
+        profile = self._current_profile(request)
+        queryset = self._base_queryset(profile)
+
+        connection_status = request.query_params.get('status')
+        if connection_status:
+            valid_statuses = {choice[0] for choice in UserConnection.STATUS_CHOICES}
+            if connection_status not in valid_statuses:
+                return Response({'error': 'Invalid connection status.'}, status=status.HTTP_400_BAD_REQUEST)
+            queryset = queryset.filter(status=connection_status)
+
+        role = request.query_params.get('role')
+        if role == 'sent':
+            queryset = queryset.filter(requester=profile)
+        elif role == 'received':
+            queryset = queryset.filter(receiver=profile)
+        elif role:
+            return Response({'error': 'role must be sent or received.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(UserConnectionSerializer(queryset, many=True, context={'request': request}).data)
+
+    @action(detail=False, methods=['post'])
+    def request(self, request):
+        serializer = UserConnectionRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        requester = self._current_profile(request)
+        receiver = get_object_or_404(UserProfile, id=serializer.validated_data['matched_user_profile_id'])
+
+        if requester.id == receiver.id:
+            return Response({'error': 'Cannot connect with yourself.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not UserMatch.objects.filter(user=requester, matched_user=receiver).exists():
+            return Response({'error': 'Connections can only be requested for matched users.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        low_id, high_id = sorted((requester.id, receiver.id))
+        try:
+            with db_transaction.atomic():
+                existing = (
+                    UserConnection.objects
+                    .select_for_update()
+                    .filter(profile_low_id=low_id, profile_high_id=high_id)
+                    .select_related('requester__user', 'receiver__user')
+                    .first()
+                )
+                if existing:
+                    return self._serialize(existing, request)
+
+                connection = UserConnection.objects.create(
+                    requester=requester,
+                    receiver=receiver,
+                    profile_low_id=low_id,
+                    profile_high_id=high_id,
+                    status=UserConnection.STATUS_PENDING,
+                )
+        except IntegrityError:
+            connection = get_object_or_404(
+                UserConnection.objects.select_related('requester__user', 'receiver__user'),
+                profile_low_id=low_id,
+                profile_high_id=high_id,
+            )
+            return self._serialize(connection, request)
+
+        return self._serialize(connection, request, status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def accept(self, request, pk=None):
+        profile = self._current_profile(request)
+        connection = get_object_or_404(self._base_queryset(profile), pk=pk)
+
+        if connection.receiver_id != profile.id:
+            return Response({'error': 'Only the receiver can accept this connection.'}, status=status.HTTP_403_FORBIDDEN)
+        if connection.status != UserConnection.STATUS_PENDING:
+            return Response({'error': 'Only pending connections can be accepted.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        connection.status = UserConnection.STATUS_ACCEPTED
+        connection.responded_at = timezone.now()
+        connection.save(update_fields=['status', 'responded_at', 'updated_at'])
+        return self._serialize(connection, request)
+
+    @action(detail=True, methods=['post'])
+    def decline(self, request, pk=None):
+        profile = self._current_profile(request)
+        connection = get_object_or_404(self._base_queryset(profile), pk=pk)
+
+        if connection.receiver_id != profile.id:
+            return Response({'error': 'Only the receiver can decline this connection.'}, status=status.HTTP_403_FORBIDDEN)
+        if connection.status != UserConnection.STATUS_PENDING:
+            return Response({'error': 'Only pending connections can be declined.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        connection.status = UserConnection.STATUS_DECLINED
+        connection.responded_at = timezone.now()
+        connection.save(update_fields=['status', 'responded_at', 'updated_at'])
+        return self._serialize(connection, request)
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        profile = self._current_profile(request)
+        connection = get_object_or_404(self._base_queryset(profile), pk=pk)
+
+        if connection.requester_id != profile.id:
+            return Response({'error': 'Only the requester can cancel this connection.'}, status=status.HTTP_403_FORBIDDEN)
+        if connection.status != UserConnection.STATUS_PENDING:
+            return Response({'error': 'Only pending connections can be cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        connection.status = UserConnection.STATUS_CANCELLED
+        connection.responded_at = timezone.now()
+        connection.save(update_fields=['status', 'responded_at', 'updated_at'])
+        return self._serialize(connection, request)
+
+    @action(detail=True, methods=['post'])
+    def disconnect(self, request, pk=None):
+        profile = self._current_profile(request)
+        connection = get_object_or_404(self._base_queryset(profile), pk=pk)
+
+        if connection.status != UserConnection.STATUS_ACCEPTED:
+            return Response({'error': 'Only accepted connections can be disconnected.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        connection.status = UserConnection.STATUS_DISCONNECTED
+        connection.save(update_fields=['status', 'updated_at'])
+        return self._serialize(connection, request)
+
+    @action(detail=False, methods=['get'])
+    def pending(self, request):
+        profile = self._current_profile(request)
+        queryset = self._base_queryset(profile).filter(status=UserConnection.STATUS_PENDING)
+        return Response(UserConnectionSerializer(queryset, many=True, context={'request': request}).data)
+
+    @action(detail=False, methods=['get'])
+    def received(self, request):
+        profile = self._current_profile(request)
+        queryset = self._base_queryset(profile).filter(receiver=profile, status=UserConnection.STATUS_PENDING)
+        return Response(UserConnectionSerializer(queryset, many=True, context={'request': request}).data)
+
+    @action(detail=False, methods=['get'])
+    def sent(self, request):
+        profile = self._current_profile(request)
+        queryset = self._base_queryset(profile).filter(requester=profile, status=UserConnection.STATUS_PENDING)
+        return Response(UserConnectionSerializer(queryset, many=True, context={'request': request}).data)
+
+    @action(detail=False, methods=['get'])
+    def accepted(self, request):
+        profile = self._current_profile(request)
+        queryset = self._base_queryset(profile).filter(status=UserConnection.STATUS_ACCEPTED)
+        return Response(UserConnectionSerializer(queryset, many=True, context={'request': request}).data)
 
 
 class CompatibilityViewSet(viewsets.ViewSet):

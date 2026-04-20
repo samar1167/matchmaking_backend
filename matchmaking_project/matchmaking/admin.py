@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    UserProfile, UserMatchPreference, PrivatePerson, CompatibilityScore,
+    UserProfile, UserMatchPreference, UserMatch, UserConnection, PrivatePerson, CompatibilityScore,
     CompatibilityTransaction, CompatibilityParameter, FeatureFlag, UserPlan,
     PaymentRecord, AuthActionToken,
 )
@@ -33,6 +33,25 @@ class UserMatchPreferenceAdmin(admin.ModelAdmin):
     search_fields = (
         'user__email',
     )
+
+
+@admin.register(UserMatch)
+class UserMatchAdmin(admin.ModelAdmin):
+    list_display = ('user', 'matched_user', 'score', 'rank', 'created_at')
+    list_filter = ('rank',)
+    search_fields = ('user__user__email', 'matched_user__user__email')
+    ordering = ('rank', '-score')
+    list_select_related = ('user__user', 'matched_user__user')
+
+
+@admin.register(UserConnection)
+class UserConnectionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'requester', 'receiver', 'status', 'requested_at', 'responded_at', 'updated_at')
+    list_filter = ('status',)
+    search_fields = ('requester__user__email', 'receiver__user__email')
+    ordering = ('-updated_at',)
+    readonly_fields = ('profile_low', 'profile_high', 'requested_at', 'responded_at', 'updated_at')
+    list_select_related = ('requester__user', 'receiver__user', 'profile_low__user', 'profile_high__user')
 
 
 @admin.register(PrivatePerson)
