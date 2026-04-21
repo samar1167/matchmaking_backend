@@ -10,15 +10,16 @@ from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.db import IntegrityError
 from django.db import transaction as db_transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Case, Exists, F, IntegerField, OuterRef, Q, Sum, When
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import UserPlan, PaymentRecord, FeatureFlag, CompatibilityParameter
-from .models import UserProfile, UserMatchPreference, UserMatch, UserConnection, PrivatePerson, CompatibilityScore, CompatibilityTransaction, AuthActionToken
+from .models import UserProfile, UserMatchPreference, UserMatch, UserConnection, PrivatePerson, CompatibilityScore, CompatibilityTransaction, AuthActionToken, ChatConversation, ChatMessage
 from .serializers import (
     RegisterSerializer, UserProfileSerializer, UserMatchPreferenceSerializer, PrivatePersonSerializer,
     UserMatchSerializer, UserConnectionSerializer, UserConnectionRequestSerializer,
     CompatibilityScoreSerializer, CompatibilityRequestSerializer,
+    ChatConversationSerializer, ChatMessageSerializer, ChatMessageCreateSerializer,
 )
 from .serializers import (PurchaseCreditsSerializer, PaymentRecordSerializer, CompatibilityParameterSerializer)
 from .serializers import EmailTokenObtainPairSerializer
@@ -27,6 +28,45 @@ from .astrology_service import AstrologyService
 import logging
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+
+def chat_user_group_name(user_id):
+    return f'chat_user_{user_id}'
+
+
+def publish_chat_event(user_ids, payload):
+    try:
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+    except ImportError:
+        return
+
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+
+    for user_id in set(user_ids):
+        try:
+            async_to_sync(channel_layer.group_send)(
+                chat_user_group_name(user_id),
+                {
+                    'type': 'chat.message',
+                    'payload': payload,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Failed to publish chat event for user %s: %s", user_id, exc)
+
+
+def get_or_create_chat_conversation(connection):
+    low_id, high_id = sorted((connection.requester_id, connection.receiver_id))
+    return ChatConversation.objects.get_or_create(
+        connection=connection,
+        defaults={
+            'user_a_id': low_id,
+            'user_b_id': high_id,
+        },
+    )
 
 
 def send_auth_action_email(user, token_record):
@@ -379,6 +419,7 @@ class UserConnectionViewSet(viewsets.ViewSet):
         connection.status = UserConnection.STATUS_ACCEPTED
         connection.responded_at = timezone.now()
         connection.save(update_fields=['status', 'responded_at', 'updated_at'])
+        get_or_create_chat_conversation(connection)
         return self._serialize(connection, request)
 
     @action(detail=True, methods=['post'])
@@ -446,6 +487,215 @@ class UserConnectionViewSet(viewsets.ViewSet):
         profile = self._current_profile(request)
         queryset = self._base_queryset(profile).filter(status=UserConnection.STATUS_ACCEPTED)
         return Response(UserConnectionSerializer(queryset, many=True, context={'request': request}).data)
+
+
+class ChatConversationViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def _current_profile(self, request):
+        return get_object_or_404(UserProfile, user=request.user)
+
+    def _base_queryset(self, profile):
+        return (
+            ChatConversation.objects
+            .filter(Q(user_a=profile) | Q(user_b=profile))
+            .select_related(
+                'connection',
+                'user_a__user',
+                'user_b__user',
+                'last_message__sender__user',
+                'last_message__receiver__user',
+            )
+        )
+
+    def _serialize(self, conversation, request, status_code=status.HTTP_200_OK):
+        serializer = ChatConversationSerializer(conversation, context={'request': request})
+        return Response(serializer.data, status=status_code)
+
+    def _conversation_for_request(self, request, pk):
+        profile = self._current_profile(request)
+        conversation = get_object_or_404(self._base_queryset(profile), pk=pk)
+        return profile, conversation
+
+    def list(self, request):
+        profile = self._current_profile(request)
+        queryset = self._base_queryset(profile).order_by('-last_message_at', '-updated_at', '-id')
+        return Response(ChatConversationSerializer(queryset, many=True, context={'request': request}).data)
+
+    def retrieve(self, request, pk=None):
+        _, conversation = self._conversation_for_request(request, pk)
+        return self._serialize(conversation, request)
+
+    @action(detail=False, methods=['post'], url_path=r'from-connection/(?P<connection_id>[^/.]+)')
+    def from_connection(self, request, connection_id=None):
+        profile = self._current_profile(request)
+        connection = get_object_or_404(
+            UserConnection.objects.select_related('requester__user', 'receiver__user'),
+            pk=connection_id,
+        )
+
+        if profile.id not in (connection.requester_id, connection.receiver_id):
+            return Response({'error': 'You are not part of this connection.'}, status=status.HTTP_403_FORBIDDEN)
+        if connection.status != UserConnection.STATUS_ACCEPTED:
+            return Response({'error': 'Chat is only available for accepted connections.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        conversation, created = get_or_create_chat_conversation(connection)
+        conversation = self._base_queryset(profile).get(pk=conversation.pk)
+        return self._serialize(conversation, request, status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get', 'post'])
+    def messages(self, request, pk=None):
+        profile, conversation = self._conversation_for_request(request, pk)
+
+        if request.method == 'GET':
+            try:
+                limit = min(int(request.query_params.get('limit', 50)), 100)
+            except ValueError:
+                return Response({'error': 'limit must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+            if limit < 1:
+                return Response({'error': 'limit must be greater than zero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            messages = (
+                ChatMessage.objects
+                .filter(conversation=conversation, deleted_at__isnull=True)
+                .select_related('sender__user', 'receiver__user')
+                .order_by('-id')
+            )
+            before = request.query_params.get('before')
+            if before:
+                try:
+                    messages = messages.filter(id__lt=int(before))
+                except ValueError:
+                    return Response({'error': 'before must be a message id.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            page = list(messages[:limit + 1])
+            has_more = len(page) > limit
+            page = page[:limit]
+            next_before = page[-1].id if has_more and page else None
+            return Response({
+                'results': ChatMessageSerializer(page, many=True).data,
+                'next_before': next_before,
+            })
+
+        serializer = ChatMessageCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        body = serializer.validated_data['body']
+        client_message_id = serializer.validated_data.get('client_message_id')
+        notify_base_payload = None
+        sender_unread_count = 0
+        receiver_unread_count = 0
+
+        with db_transaction.atomic():
+            locked = (
+                ChatConversation.objects
+                .select_for_update()
+                .select_related('connection', 'user_a__user', 'user_b__user')
+                .get(pk=conversation.pk)
+            )
+            if locked.connection.status != UserConnection.STATUS_ACCEPTED:
+                return Response({'error': 'Chat is only available for accepted connections.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            receiver = locked.other_profile(profile)
+            if receiver is None:
+                return Response({'error': 'You are not part of this conversation.'}, status=status.HTTP_403_FORBIDDEN)
+
+            if client_message_id:
+                existing = ChatMessage.objects.filter(sender=profile, client_message_id=client_message_id).first()
+                if existing:
+                    return Response(ChatMessageSerializer(existing).data, status=status.HTTP_200_OK)
+
+            message = ChatMessage.objects.create(
+                conversation=locked,
+                sender=profile,
+                receiver=receiver,
+                body=body,
+                client_message_id=client_message_id,
+            )
+
+            update_fields = {
+                'last_message': message,
+                'last_message_at': message.created_at,
+            }
+            if receiver.id == locked.user_a_id:
+                update_fields['user_a_unread_count'] = F('user_a_unread_count') + 1
+                update_fields['user_b_last_read_message'] = message
+            else:
+                update_fields['user_b_unread_count'] = F('user_b_unread_count') + 1
+                update_fields['user_a_last_read_message'] = message
+
+            ChatConversation.objects.filter(pk=locked.pk).update(**update_fields)
+            locked.refresh_from_db()
+            message = ChatMessage.objects.select_related('sender__user', 'receiver__user').get(pk=message.pk)
+
+            message_payload = ChatMessageSerializer(message).data
+            sender_unread_count = locked.unread_count_for(profile)
+            receiver_unread_count = locked.unread_count_for(receiver)
+            notify_base_payload = {
+                'type': 'message.created',
+                'conversationId': locked.id,
+                'message': message_payload,
+            }
+
+        publish_chat_event([receiver.user_id], {
+            **notify_base_payload,
+            'unreadCount': receiver_unread_count,
+            'totalUnreadCount': total_unread_count_for_profile(receiver),
+        })
+        publish_chat_event([profile.user_id], {
+            **notify_base_payload,
+            'unreadCount': sender_unread_count,
+            'totalUnreadCount': total_unread_count_for_profile(profile),
+        })
+        return Response(ChatMessageSerializer(message).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def read(self, request, pk=None):
+        profile, conversation = self._conversation_for_request(request, pk)
+
+        with db_transaction.atomic():
+            locked = ChatConversation.objects.select_for_update().get(pk=conversation.pk)
+            latest_message_id = locked.last_message_id
+            if profile.id == locked.user_a_id:
+                locked.user_a_unread_count = 0
+                locked.user_a_last_read_message_id = latest_message_id
+                update_fields = ['user_a_unread_count', 'user_a_last_read_message', 'updated_at']
+            else:
+                locked.user_b_unread_count = 0
+                locked.user_b_last_read_message_id = latest_message_id
+                update_fields = ['user_b_unread_count', 'user_b_last_read_message', 'updated_at']
+            locked.save(update_fields=update_fields)
+
+        total_unread = total_unread_count_for_profile(profile)
+        payload = {
+            'type': 'conversation.read',
+            'conversationId': locked.id,
+            'unreadCount': 0,
+            'totalUnreadCount': total_unread,
+        }
+        publish_chat_event([profile.user_id], payload)
+        return Response(payload)
+
+
+def total_unread_count_for_profile(profile):
+    total = ChatConversation.objects.filter(Q(user_a=profile) | Q(user_b=profile)).aggregate(
+        total=Sum(
+            Case(
+                When(user_a=profile, then=F('user_a_unread_count')),
+                When(user_b=profile, then=F('user_b_unread_count')),
+                default=0,
+                output_field=IntegerField(),
+            )
+        )
+    )['total']
+    return total or 0
+
+
+class ChatUnreadCountView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile = get_object_or_404(UserProfile, user=request.user)
+        return Response({'totalUnreadCount': total_unread_count_for_profile(profile)})
 
 
 class CompatibilityViewSet(viewsets.ViewSet):

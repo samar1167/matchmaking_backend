@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     UserProfile, UserMatchPreference, UserMatch, UserConnection, PrivatePerson, CompatibilityScore,
     CompatibilityTransaction, CompatibilityParameter, FeatureFlag, UserPlan,
-    PaymentRecord, AuthActionToken,
+    PaymentRecord, AuthActionToken, ChatConversation, ChatMessage,
 )
 
 
@@ -52,6 +52,22 @@ class UserConnectionAdmin(admin.ModelAdmin):
     ordering = ('-updated_at',)
     readonly_fields = ('profile_low', 'profile_high', 'requested_at', 'responded_at', 'updated_at')
     list_select_related = ('requester__user', 'receiver__user', 'profile_low__user', 'profile_high__user')
+
+
+@admin.register(ChatConversation)
+class ChatConversationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'connection', 'user_a', 'user_b', 'last_message_at', 'user_a_unread_count', 'user_b_unread_count')
+    search_fields = ('user_a__user__email', 'user_b__user__email')
+    readonly_fields = ('created_at', 'updated_at')
+    list_select_related = ('connection', 'user_a__user', 'user_b__user')
+
+
+@admin.register(ChatMessage)
+class ChatMessageAdmin(admin.ModelAdmin):
+    list_display = ('id', 'conversation', 'sender', 'receiver', 'created_at', 'deleted_at')
+    search_fields = ('sender__user__email', 'receiver__user__email', 'body', 'client_message_id')
+    readonly_fields = ('conversation', 'sender', 'receiver', 'body', 'client_message_id', 'created_at', 'deleted_at')
+    list_select_related = ('conversation', 'sender__user', 'receiver__user')
 
 
 @admin.register(PrivatePerson)

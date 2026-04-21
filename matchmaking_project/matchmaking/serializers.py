@@ -6,7 +6,7 @@ from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
     UserProfile, UserMatchPreference, UserMatch, UserConnection, PrivatePerson, CompatibilityScore, CompatibilityParameter,
-    PaymentRecord, UserPlan, AuthActionToken,
+    PaymentRecord, UserPlan, AuthActionToken, ChatConversation, ChatMessage,
 )
 
 User = get_user_model()
@@ -259,7 +259,6 @@ class UserMatchPreferenceSerializer(serializers.ModelSerializer):
 
 
 class UserMatchProfileSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
     first_name = serializers.CharField(source='user.first_name', read_only=True)
     last_name = serializers.CharField(source='user.last_name', read_only=True)
 
@@ -267,13 +266,11 @@ class UserMatchProfileSerializer(serializers.ModelSerializer):
         model = UserProfile
         fields = (
             'id',
-            'user',
             'first_name',
             'last_name',
+            'place_of_birth',
             'profile_picture',
             'public_match',
-            'created_at',
-            'updated_at',
         )
         read_only_fields = fields
 
@@ -283,7 +280,7 @@ class UserMatchSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserMatch
-        fields = ('id', 'matched_user', 'score', 'rank', 'created_at')
+        fields = ('id', 'matched_user')
         read_only_fields = fields
 
 
@@ -330,6 +327,81 @@ class UserConnectionSerializer(serializers.ModelSerializer):
 
         other = obj.receiver if obj.requester_id == current_profile.id else obj.requester
         return UserConnectionProfileSerializer(other, context=self.context).data
+
+
+MAX_CHAT_MESSAGE_LENGTH = 4000
+
+
+class ChatMessageSerializer(serializers.ModelSerializer):
+    sender_user_id = serializers.IntegerField(source='sender.user_id', read_only=True)
+    receiver_user_id = serializers.IntegerField(source='receiver.user_id', read_only=True)
+
+    class Meta:
+        model = ChatMessage
+        fields = (
+            'id',
+            'conversation',
+            'sender',
+            'receiver',
+            'sender_user_id',
+            'receiver_user_id',
+            'body',
+            'client_message_id',
+            'created_at',
+            'deleted_at',
+        )
+        read_only_fields = fields
+
+
+class ChatMessageCreateSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=MAX_CHAT_MESSAGE_LENGTH, trim_whitespace=True)
+    client_message_id = serializers.CharField(max_length=64, required=False, allow_blank=False)
+
+    def validate_body(self, value):
+        if not value:
+            raise serializers.ValidationError('Message body cannot be empty.')
+        return value.replace('\r\n', '\n').replace('\r', '\n')
+
+
+class ChatConversationSerializer(serializers.ModelSerializer):
+    other_user = serializers.SerializerMethodField()
+    last_message = ChatMessageSerializer(read_only=True)
+    unread_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatConversation
+        fields = (
+            'id',
+            'connection',
+            'other_user',
+            'last_message',
+            'last_message_at',
+            'unread_count',
+            'created_at',
+            'updated_at',
+        )
+        read_only_fields = fields
+
+    def _current_profile(self):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+        return getattr(request.user, 'astro_profile', None)
+
+    def get_other_user(self, obj):
+        current_profile = self._current_profile()
+        if not current_profile:
+            return None
+        other = obj.other_profile(current_profile)
+        if not other:
+            return None
+        return UserConnectionProfileSerializer(other, context=self.context).data
+
+    def get_unread_count(self, obj):
+        current_profile = self._current_profile()
+        if not current_profile:
+            return 0
+        return obj.unread_count_for(current_profile)
 
 
 class PrivatePersonSerializer(serializers.ModelSerializer):

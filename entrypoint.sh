@@ -19,9 +19,8 @@ mkdir -p /app/matchmaking_project/logs
 python manage.py migrate --noinput
 python manage.py collectstatic --noinput
 
-exec gunicorn config.wsgi:application \
-    --bind 0.0.0.0:8000 \
-    --workers 3 \
-    --timeout 120 \
-    --access-logfile /app/matchmaking_project/logs/access.log \
-    --error-logfile /app/matchmaking_project/logs/error.log
+exec daphne \
+    --bind 0.0.0.0 \
+    --port 8000 \
+    --access-log /app/matchmaking_project/logs/access.log \
+    config.asgi:application

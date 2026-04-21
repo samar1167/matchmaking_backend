@@ -189,10 +189,10 @@ class UserConnection(models.Model):
     class Meta:
         ordering = ['-updated_at']
         indexes = [
-            models.Index(fields=['requester', 'status', '-updated_at']),
-            models.Index(fields=['receiver', 'status', '-updated_at']),
-            models.Index(fields=['profile_low', 'profile_high']),
-            models.Index(fields=['status', '-updated_at']),
+            models.Index(fields=['requester', 'status', '-updated_at'], name='matchmaking_request_78b61c_idx'),
+            models.Index(fields=['receiver', 'status', '-updated_at'], name='matchmaking_receive_1e08ef_idx'),
+            models.Index(fields=['profile_low', 'profile_high'], name='matchmaking_profile_c4cc47_idx'),
+            models.Index(fields=['status', '-updated_at'], name='matchmaking_status_47054c_idx'),
         ]
         constraints = [
             models.UniqueConstraint(fields=['profile_low', 'profile_high'], name='unique_user_connection_pair'),
@@ -211,6 +211,104 @@ class UserConnection(models.Model):
 
     def __str__(self):
         return f"{self.requester} requested {self.receiver} ({self.status})"
+
+
+class ChatConversation(models.Model):
+    connection = models.OneToOneField(UserConnection, on_delete=models.CASCADE, related_name='chat_conversation')
+    user_a = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='chat_conversations_as_user_a')
+    user_b = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='chat_conversations_as_user_b')
+    last_message = models.ForeignKey(
+        'ChatMessage',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
+    last_message_at = models.DateTimeField(null=True, blank=True)
+    user_a_last_read_message = models.ForeignKey(
+        'ChatMessage',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
+    user_b_last_read_message = models.ForeignKey(
+        'ChatMessage',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
+    user_a_unread_count = models.PositiveIntegerField(default=0)
+    user_b_unread_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-last_message_at', '-updated_at']
+        indexes = [
+            models.Index(fields=['user_a', '-last_message_at'], name='matchmaking_user_a__b2bdec_idx'),
+            models.Index(fields=['user_b', '-last_message_at'], name='matchmaking_user_b__a9ecbd_idx'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=~models.Q(user_a=models.F('user_b')),
+                name='chat_conversation_distinct_users',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.connection_id and not (self.user_a_id and self.user_b_id):
+            self.user_a_id = self.connection.profile_low_id
+            self.user_b_id = self.connection.profile_high_id
+        super().save(*args, **kwargs)
+
+    def includes_profile(self, profile):
+        return profile and profile.id in (self.user_a_id, self.user_b_id)
+
+    def other_profile(self, profile):
+        if profile.id == self.user_a_id:
+            return self.user_b
+        if profile.id == self.user_b_id:
+            return self.user_a
+        return None
+
+    def unread_count_for(self, profile):
+        if profile.id == self.user_a_id:
+            return self.user_a_unread_count
+        if profile.id == self.user_b_id:
+            return self.user_b_unread_count
+        return 0
+
+    def __str__(self):
+        return f"Chat for connection {self.connection_id}"
+
+
+class ChatMessage(models.Model):
+    conversation = models.ForeignKey(ChatConversation, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='sent_chat_messages')
+    receiver = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='received_chat_messages')
+    body = models.TextField()
+    client_message_id = models.CharField(max_length=64, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        indexes = [
+            models.Index(fields=['conversation', '-created_at', '-id'], name='matchmaking_convers_ee2874_idx'),
+            models.Index(fields=['sender', 'client_message_id'], name='matchmaking_sender__c3f202_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=['sender', 'client_message_id'], name='unique_chat_client_message'),
+            models.CheckConstraint(
+                check=~models.Q(sender=models.F('receiver')),
+                name='chat_message_sender_not_receiver',
+            ),
+        ]
+
+    def __str__(self):
+        return f"Message {self.id} in conversation {self.conversation_id}"
 
 
 class PrivatePerson(models.Model):

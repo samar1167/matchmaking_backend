@@ -1,4 +1,3 @@
-version: '3.9'
 services:
   db:
     image: mysql:8.0
@@ -22,19 +21,19 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: matchmaking_redis
-  #   restart: unless-stopped
-  #   ports:
-  #     - "6379:6379"
-  #   networks:
-  #     - matchmaking_net
-  #   healthcheck:
-  #     test: ["CMD", "redis-cli", "ping"]
-  #     interval: 10s
-  #     timeout: 3s
-  #     retries: 3
+  redis:
+    image: redis:7-alpine
+    container_name: matchmaking_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - matchmaking_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
   web:
     build:
       context: .
@@ -42,6 +41,10 @@ services:
     container_name: matchmaking_web
     restart: unless-stopped
     env_file: .env
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      REDIS_URL: redis://redis:6379/0
     volumes:
       - .:/app
       - /app/matchmaking_project/staticfiles:/app/matchmaking_project/staticfiles
@@ -51,8 +54,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      # redis:
-      #   condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - matchmaking_net
     command: /app/entrypoint.sh
