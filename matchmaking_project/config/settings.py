@@ -105,8 +105,10 @@ SIMPLE_JWT = {
 }
 
 CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='http://localhost:3000').split(',')
-ASTROLOGY_API_URL = config('ASTROLOGY_API_URL', default='')
-ASTROLOGY_API_KEY = config('ASTROLOGY_API_KEY', default='')
+DILAANU_EMAIL = config('DILAANU_EMAIL', default='')
+DILAANU_BASE_URL = config('DILAANU_BASE_URL', default='')
+DILAANU_PUBLIC_KEY = config('DILAANU_PUBLIC_KEY', default='')
+DILAANU_SECRET_KEY = config('DILAANU_SECRET_KEY', default='')
 EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@matchmaking.local')
 EMAIL_HOST = config('EMAIL_HOST', default='localhost')

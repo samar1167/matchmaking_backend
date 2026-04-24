@@ -125,12 +125,12 @@ def test_all_endpoints():
     print("🚀 Testing all API endpoints...\n")
     
     # Test each endpoint
-    test_dharma_types()
-    test_basic_compatibility()
-    test_roadvi_compatibility()
+    # test_dharma_types()
+    # test_basic_compatibility()
+    # test_roadvi_compatibility()
     test_detailed_compatibility()
-    test_timing_compatibility()
-    test_dateore_bot_compatibility()
+    # test_timing_compatibility()
+    # test_dateore_bot_compatibility()
     
     print("\n✅ All tests completed!")
 

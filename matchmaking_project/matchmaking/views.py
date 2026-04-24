@@ -731,6 +731,8 @@ class CompatibilityViewSet(viewsets.ViewSet):
             compat_data = AstrologyService.get_compatibility(
                 user_profile, target,
             )
+            if compat_data is None:
+                raise Exception(f"Could not perform compatibility. Please try later.")
 
             with db_transaction.atomic():
                 # ── Consume one credit (paid first, then free) ──
@@ -740,11 +742,14 @@ class CompatibilityViewSet(viewsets.ViewSet):
                 # ── Persist latest result ──
                 defaults = {
                     'is_paid':             is_paid_session,
-                    'overall_score':       compat_data['compatibility_score'],
-                    'sun_compatibility':   compat_data.get('sun_compatibility'),
-                    'moon_compatibility':  compat_data.get('moon_compatibility'),
-                    'venus_compatibility': compat_data.get('venus_compatibility'),
-                    'mars_compatibility':  compat_data.get('mars_compatibility'),
+                    'overall_score':       compat_data.get('overall_score'),
+                    'compatibility':       compat_data.get('compatibility'),
+                    'durability':          compat_data.get('durability'),
+                    'chemistry':           compat_data.get('chemistry'),
+                    'sizzle':              compat_data.get('sizzle'),
+                    'destiny':             compat_data.get('destiny'),
+                    'friendship':          compat_data.get('friendship'),
+                    'waity':               compat_data.get('waity'),
                     'description':         compat_data.get('description', ''),
                     'api_response':        compat_data.get('api_response'),
                 }
@@ -756,7 +761,7 @@ class CompatibilityViewSet(viewsets.ViewSet):
                     compatibility_score=obj,
                     credit_type=credit_type,
                     is_paid=is_paid_session,
-                    overall_score=compat_data['compatibility_score'],
+                    overall_score=compat_data['overall_score'],
                     credits_remaining_after=plan.total_credits,
                     description=compat_data.get('description', ''),
                     api_response=compat_data.get('api_response'),

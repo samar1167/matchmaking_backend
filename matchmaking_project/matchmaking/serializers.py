@@ -409,15 +409,7 @@ class PrivatePersonSerializer(serializers.ModelSerializer):
         model = PrivatePerson
         fields = ('id', 'name', 'nickname', 'notes', 'date_of_birth', 'time_of_birth', 'place_of_birth', 'latitude', 'longitude', 'timezone', 'created_at', 'updated_at')
         read_only_fields = ('id', 'created_at', 'updated_at')
-
-class CompatibilityScoreSerializer(serializers.ModelSerializer):
-    matched_user_email          = serializers.EmailField(source='matched_user.user.email', read_only=True)
-    matched_private_person_name = serializers.CharField(source='matched_private_person.name', read_only=True)
-    is_private_match            = serializers.BooleanField(read_only=True)
-    class Meta:
-        model = CompatibilityScore
-        fields = ('id', 'user', 'matched_user', 'matched_user_email', 'matched_private_person', 'matched_private_person_name', 'is_private_match', 'overall_score', 'sun_compatibility', 'moon_compatibility', 'venus_compatibility', 'mars_compatibility', 'description', 'created_at', 'updated_at')
-        read_only_fields = ('id', 'api_response', 'created_at', 'updated_at')
+        
 
 class CompatibilityRequestSerializer(serializers.Serializer):
     matched_user_id           = serializers.IntegerField(required=False)
@@ -466,36 +458,46 @@ class ParameterResultSerializer(serializers.Serializer):
 
 
 class CompatibilityScoreSerializer(serializers.ModelSerializer):
-    matched_user_email           = serializers.EmailField(source='matched_user.user.email', read_only=True)
-    matched_private_person_name  = serializers.CharField(source='matched_private_person.name', read_only=True)
+    # matched_user_email           = serializers.EmailField(source='matched_user.user.email', read_only=True)
+    matched_user_name            = serializers.SerializerMethodField()
+    # matched_private_person_name  = serializers.CharField(source='matched_private_person.name', read_only=True)
     is_private_match             = serializers.BooleanField(read_only=True)
     parameters                   = serializers.SerializerMethodField()
     upgrade_required             = serializers.SerializerMethodField()
-    credits_remaining            = serializers.SerializerMethodField()
 
     class Meta:
         model = CompatibilityScore
         fields = (
             'id', 'user',
-            'matched_user', 'matched_user_email',
-            'matched_private_person', 'matched_private_person_name',
+            'matched_user', 'matched_user_name',
+            'matched_private_person',
             'is_private_match',
             'is_paid',
             'overall_score',
-            'parameters',          # replaces flat sun/moon/venus/mars fields
+            'parameters',
             'description',
             'upgrade_required',
-            'credits_remaining',
             'created_at', 'updated_at',
         )
         read_only_fields = ('id', 'api_response', 'created_at', 'updated_at')
+
+    def get_matched_user_name(self, obj):
+        if obj.is_private_match():
+            return obj.matched_private_person.name if obj.matched_private_person else None
+        if not obj.matched_user:
+            return None
+        user = obj.matched_user.user
+        return user.get_full_name() or user.username or user.email
 
     def get_parameters(self, obj):
         is_paid = obj.is_paid
         params  = CompatibilityParameter.objects.filter(is_active=True)
         result  = []
         for param in params:
-            score = obj.api_response.get(param.key) if obj.api_response else None
+            if hasattr(obj, param.key):
+                score = getattr(obj, param.key)
+            else:
+                score = None
             locked = not (param.is_free or is_paid)
             result.append({
                 'key':    param.key,
